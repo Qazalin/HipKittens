@@ -8,7 +8,7 @@ torch.manual_seed(0)
 random.seed(0)
 
 # Inputs
-N = 16
+N = 64
 A = torch.randn(N, N, dtype=torch.bfloat16, device='cuda') / 10.0  
 C = torch.zeros(N, N, dtype=torch.bfloat16, device='cuda')
 C_ref = torch.zeros(N, N, dtype=torch.bfloat16, device='cuda')  

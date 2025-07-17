@@ -3,7 +3,7 @@
 #include "../utils.cpp"
 using namespace kittens;
 
-constexpr int BLOCK_SIZE = 16;  
+constexpr int BLOCK_SIZE = 64;  
 
 #define NUM_WARPS 1
 #define NUM_THREADS (kittens::WARP_THREADS * NUM_WARPS)
@@ -32,12 +32,21 @@ void micro_tk(const micro_globals g) {
     st_bf<BLOCK_SIZE, BLOCK_SIZE> (&Out) = al.allocate<st_bf<BLOCK_SIZE, BLOCK_SIZE>>();
     st_bf<BLOCK_SIZE, BLOCK_SIZE> (&Ref_Out) = al.allocate<st_bf<BLOCK_SIZE, BLOCK_SIZE>>();
 
+    rt_bf<BLOCK_SIZE, BLOCK_SIZE> in_reg, in_reg_ref;
+    rt_bf<BLOCK_SIZE, BLOCK_SIZE> out_reg, out_reg_ref;
+
     load_global_to_shared_direct<2, false, st_bf<BLOCK_SIZE, BLOCK_SIZE>, _gl_A, coord<st_bf<BLOCK_SIZE, BLOCK_SIZE>>, NUM_THREADS>(g.in, {0, 0, 0, 0}, In);
     __syncthreads();
     G::load(In_ref, g.in, {0, 0, 0, 0});
     __syncthreads();
-    copy(Out, In);
-    copy(Ref_Out, In_ref);
+
+    load(in_reg, In);
+    copy(out_reg, in_reg);
+    store(Out, out_reg);
+
+    load(in_reg_ref, In_ref);
+    copy(out_reg_ref, in_reg_ref);
+    store(Ref_Out, out_reg_ref);
     __syncthreads();
 
     G::store(g.ref_out, Ref_Out, {0, 0, 0, 0});
