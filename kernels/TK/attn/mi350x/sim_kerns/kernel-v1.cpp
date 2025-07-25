@@ -69,16 +69,14 @@ __global__ void attend_ker(const attn_globals<D> g) {
     constexpr float TEMPERATURE_SCALE = (D == 128) ? 0.08838834764f*1.44269504089f : 0.125f*1.44269504089f;
 
     // Initialize all of the register tiles.
-    qkvo_tile<D, bf16> q_reg, k_reg; // Q and K are both row layout, as we use mma_ABt.
-    qkvo_tile<D, bf16, col_l> v_reg; // V is column layout, as we use mma_AB.
+    qkvo_tile<D, bf16> q_reg; // Q and K are both row layout, as we use mma_ABt.
     qkvo_tile<D, float, accum_l> o_reg; // Output tile.
     attn_tile<D, float, accum_l> att_block; // attention tile, in float.
     typename attn_tile<D, float, accum_l>::col_vec max_vec, norm_vec, max_vec_prev;
 
     // Pre-scale Q by temperature
-    load(q_reg, g.Qg, {batch_idx, head_idx, tile_idx, 0});
     qkvo_tile<D, float> q_reg_fl;
-    copy(q_reg_fl, q_reg);
+    load(q_reg_fl, g.Qg, {batch_idx, head_idx, tile_idx, 0});
     mul(q_reg_fl, q_reg_fl, TEMPERATURE_SCALE);  // Use sqrtf for clarity
     copy(q_reg, q_reg_fl);
 
@@ -92,7 +90,6 @@ __global__ void attend_ker(const attn_globals<D> g) {
     zero(o_reg);
     zero(norm_vec);
     neg_infty(max_vec);
-
 
     int num_tiles = ATTN_N / N_STEP;
     int num_sub_tiles = N_STEP / SUB_N_STEP;
@@ -111,15 +108,21 @@ __global__ void attend_ker(const attn_globals<D> g) {
         for (int i = 0; i < num_sub_tiles; i++) {
 
             // load the k and v tiles from shared memory to registers
+            qkvo_tile<D, bf16> k_reg;
             load_lds_reg(k_reg, subtile_inplace<SUB_N_STEP, ATTN_D>(k_smem[tic], {i, 0}));
-            load_lds_reg(v_reg, subtile_inplace<SUB_N_STEP, ATTN_D>(v_smem[tic], {i, 0}));
 
-            // A = Q @ K.T (now temperature is fully applied)
+            // zero
             zero(att_block);
-            mma_ABt(att_block, q_reg, k_reg, att_block);
-            
+
             // Store previous max values
             copy(max_vec_prev, max_vec);
+
+            // A = Q @ K.T (now temperature is fully applied)
+            asm volatile("s_waitcnt lgkmcnt(0)");
+            __builtin_amdgcn_s_setprio(1);
+            mma_ABt(att_block, q_reg, k_reg, att_block);
+            __builtin_amdgcn_s_setprio(0);
+            __builtin_amdgcn_s_barrier();
             
             // Update max in-place and compute correction
             row_max(max_vec, att_block, max_vec);  // max_vec = max(max_vec, row_max(att_block))
@@ -134,12 +137,15 @@ __global__ void attend_ker(const attn_globals<D> g) {
             mul(norm_vec, norm_vec, max_vec_prev);
             row_sum(norm_vec, att_block, norm_vec);
             
-            // Update running output
-            mul_row(o_reg, o_reg, max_vec_prev);
-            
             attn_tile<D, bf16, accum_l> att_block_bf16;
             copy(att_block_bf16, att_block);  // float → bf16, same layout
             auto& att_block_row_bf16 = swap_layout_inplace<row_l>(att_block_bf16);
+
+            // Update running output
+            mul_row(o_reg, o_reg, max_vec_prev);
+
+            qkvo_tile<D, bf16, col_l> v_reg; // V is column layout, as we use mma_AB.
+            load_lds_reg(v_reg, subtile_inplace<SUB_N_STEP, ATTN_D>(v_smem[tic], {i, 0}));
 
             // O += A @ V
             mma_AB(o_reg, att_block_row_bf16, v_reg, o_reg);
@@ -147,21 +153,26 @@ __global__ void attend_ker(const attn_globals<D> g) {
     }
 
     // Epilogue - process final tile
-    __builtin_amdgcn_s_waitcnt(0);
-    __builtin_amdgcn_s_barrier();
-
     for (int i = 0; i < num_sub_tiles; i++) {
 
         // load the k and v tiles from shared memory to registers
+        qkvo_tile<D, bf16> k_reg;
         load_lds_reg(k_reg, subtile_inplace<SUB_N_STEP, ATTN_D>(k_smem[tic], {i, 0}));
-        load_lds_reg(v_reg, subtile_inplace<SUB_N_STEP, ATTN_D>(v_smem[tic], {i, 0}));
+
+        // zero
+        zero(att_block);
+
+        // Store previous max values
+        copy(max_vec_prev, max_vec);
 
         // A = Q @ K.T
-        zero(att_block);
+        asm volatile("s_waitcnt lgkmcnt(0)");
+        __builtin_amdgcn_s_setprio(1);
         mma_ABt(att_block, q_reg, k_reg, att_block);
+        __builtin_amdgcn_s_setprio(0);
+        __builtin_amdgcn_s_barrier();
 
         // Online softmax
-        copy(max_vec_prev, max_vec);
         row_max(max_vec, att_block, max_vec);
         sub(max_vec_prev, max_vec_prev, max_vec);
         exp2(max_vec_prev, max_vec_prev);
@@ -171,11 +182,15 @@ __global__ void attend_ker(const attn_globals<D> g) {
         
         mul(norm_vec, norm_vec, max_vec_prev);
         row_sum(norm_vec, att_block, norm_vec);
-        mul_row(o_reg, o_reg, max_vec_prev);
 
         attn_tile<D, bf16, accum_l> att_block_bf16;
         copy(att_block_bf16, att_block);
         auto& att_block_row_bf16 = swap_layout_inplace<row_l>(att_block_bf16);
+
+        mul_row(o_reg, o_reg, max_vec_prev);
+
+        qkvo_tile<D, bf16, col_l> v_reg; // V is column layout, as we use mma_AB.
+        load_lds_reg(v_reg, subtile_inplace<SUB_N_STEP, ATTN_D>(v_smem[tic], {i, 0}));
 
         mma_AB(o_reg, att_block_row_bf16, v_reg, o_reg);
     }
