@@ -84,10 +84,21 @@ __global__ void attend_ker(const attn_globals<D> g) {
     typename attn_tile<D, float, accum_l>::row_vec max_vec, norm_vec, max_vec_prev;
 
     int tic = 0, toc = 1;
+    using T = typename st_bf<BLOCK_SIZE, ATTN_D>::dtype;
+    constexpr int bytes_per_thread = 16;
+    constexpr int bytes_per_memcpy = bytes_per_thread * NUM_THREADS;
+    constexpr int memcpy_per_tile = BLOCK_SIZE * ATTN_D * sizeof(T) / bytes_per_memcpy;
+
     load_global_to_shared_direct<2, false, st_bf<N_STEP, ATTN_D>, _gl_QKVO, coord<st_bf<N_STEP,ATTN_D>>, NUM_THREADS>(
         g.Kg, {batch_idx, head_idx, 0, 0}, k_smem[tic]);
     load_global_to_shared_direct<2, false, st_bf<N_STEP, ATTN_D>, _gl_QKVO, coord<st_bf<N_STEP,ATTN_D>>, NUM_THREADS>(
         g.Vg, {batch_idx, head_idx, 0, 0}, v_smem[tic]);
+
+    uint32_t swizzled_offsets_V[memcpy_per_tile];
+    uint32_t swizzled_offsets_K[memcpy_per_tile];
+    prefill_swizzled_offsets<2, false, st_bf<N_STEP, ATTN_D>, _gl_QKVO, coord<st_bf<N_STEP, ATTN_D>>, NUM_THREADS>(g.Kg, {batch_idx, head_idx, 0, 0}, k_smem[tic], swizzled_offsets_K);
+    prefill_swizzled_offsets<2, false, st_bf<N_STEP, ATTN_D>, _gl_QKVO, coord<st_bf<N_STEP, ATTN_D>>, NUM_THREADS>(g.Vg, {batch_idx, head_idx, 0, 0}, v_smem[tic], swizzled_offsets_V);
+    __builtin_amdgcn_s_barrier();
 
     // Pre-scale Q by temperature
     qkvo_tile<D, float> q_reg_fl;
@@ -105,10 +116,10 @@ __global__ void attend_ker(const attn_globals<D> g) {
         __builtin_amdgcn_s_waitcnt(0);
         __builtin_amdgcn_s_barrier();
 
-        load_global_to_shared_direct<2, false, st_bf<N_STEP, ATTN_D>, _gl_QKVO, coord<st_bf<N_STEP,ATTN_D>>, NUM_THREADS>(
-            g.Kg, {batch_idx, head_idx, j + 1, 0}, k_smem[toc]);
-        load_global_to_shared_direct<2, false, st_bf<N_STEP, ATTN_D>, _gl_QKVO, coord<st_bf<N_STEP,ATTN_D>>, NUM_THREADS>(
-            g.Vg, {batch_idx, head_idx, j + 1, 0}, v_smem[toc]);
+        load_global_to_shared_direct_with_swizzled_offsets<2, false, st_bf<N_STEP, ATTN_D>, _gl_QKVO, coord<st_bf<N_STEP, ATTN_D>>, NUM_THREADS>(
+            g.Kg, {batch_idx, head_idx, j + 1, 0}, k_smem[toc], swizzled_offsets_K);
+        load_global_to_shared_direct_with_swizzled_offsets<2, false, st_bf<N_STEP, ATTN_D>, _gl_QKVO, coord<st_bf<N_STEP, ATTN_D>>, NUM_THREADS>(
+            g.Vg, {batch_idx, head_idx, j + 1, 0}, v_smem[toc], swizzled_offsets_V);
 
         #pragma unroll
         for (int i = 0; i < num_sub_tiles; i++) {
@@ -151,11 +162,11 @@ __global__ void attend_ker(const attn_globals<D> g) {
         }
     }
 
+    #pragma unroll
     for (int i = 0; i < num_sub_tiles; i++) {
 
         load_lds_reg(k_reg, subtile_inplace<BLOCK_SIZE, ATTN_D>(k_smem[tic], {i, 0}));
         load_lds_reg(v_reg, subtile_inplace<BLOCK_SIZE, ATTN_D>(v_smem[tic], {i, 0}));
-        __builtin_amdgcn_s_waitcnt(0);
         __builtin_amdgcn_s_barrier();
         __builtin_amdgcn_sched_barrier(0);
 
@@ -164,6 +175,7 @@ __global__ void attend_ker(const attn_globals<D> g) {
         // Store previous max values
         copy(max_vec_prev, max_vec);
         // A = Q @ K.T (now temperature is fully applied)
+        asm volatile("s_waitcnt lgkmcnt(8)\n");
         k_reg_transposed = swap_layout_and_transpose_inplace(k_reg);
         mma_AtB(att_block, k_reg_transposed, q_reg_transposed, att_block);
 
@@ -186,6 +198,7 @@ __global__ void attend_ker(const attn_globals<D> g) {
         // Update running output
         mul_col(o_reg, o_reg, max_vec_prev);
         // O += A @ V
+        asm volatile("s_waitcnt lgkmcnt(0)\n");
         mma_AtB(o_reg, v_reg, att_block_col_bf16, o_reg);
     }
 
