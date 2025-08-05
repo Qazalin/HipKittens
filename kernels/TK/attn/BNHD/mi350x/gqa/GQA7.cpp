@@ -105,7 +105,6 @@ __global__ void attend_ker(const attn_globals<D> g) {
     mma_AtB(att_block[0], k_reg_transposed, q_reg_transposed, att_block[0]);
 
     // Each warp performs a partial softmax of QK0 (i.e. some of the online softmax up until but not including the second exponential scaling of the attention block likely)
-    // copy(max_vec_prev, max_vec);
     col_max(max_vec, att_block[0], max_vec);
     sub_col(att_block[0], att_block[0], max_vec);
     exp2(att_block[0], att_block[0]);
@@ -115,6 +114,7 @@ __global__ void attend_ker(const attn_globals<D> g) {
         g.Kg, {batch_idx, 2, head_idx_kv, 0}, k_smem[0], swizzled_offsets_K);
 
     if (stagger) {
+        __builtin_amdgcn_sched_barrier(0);
         __builtin_amdgcn_s_barrier();
     }
 
@@ -125,7 +125,6 @@ __global__ void attend_ker(const attn_globals<D> g) {
     load_lds_reg_row(k_reg, k_smem[1]);
     __builtin_amdgcn_sched_barrier(0);
     __builtin_amdgcn_s_barrier();
-    __builtin_amdgcn_sched_barrier(0);
 
     // hot loop
     for (int j = 3; j < num_tiles - 1; j += 2) {
@@ -160,6 +159,7 @@ __global__ void attend_ker(const attn_globals<D> g) {
         // Cluster 2:
         //      A0V0
         asm volatile("s_waitcnt lgkmcnt(0)");
+        __builtin_amdgcn_s_setprio(1);
         mul_col(o_reg, o_reg, max_vec_prev);
         mma_AtB(o_reg, v_reg, att_block_col_bf16, o_reg);
         //      Partial softmax for QK1
@@ -167,6 +167,7 @@ __global__ void attend_ker(const attn_globals<D> g) {
         col_max(max_vec, att_block[1], max_vec);
         sub_col(att_block[1], att_block[1], max_vec);
         exp2(att_block[1], att_block[1]);
+        __builtin_amdgcn_s_setprio(0);
         __builtin_amdgcn_sched_barrier(0);
         __builtin_amdgcn_s_barrier();
         __builtin_amdgcn_sched_barrier(0);
