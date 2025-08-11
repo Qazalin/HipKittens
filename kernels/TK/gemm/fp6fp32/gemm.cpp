@@ -1,6 +1,7 @@
 #include "kittens.cuh"
 #include "utils.cpp"
 #include <random>
+#include <omp.h>
 using namespace kittens;
 
 
@@ -14,7 +15,7 @@ using dout = float;
 
 
 constexpr int BLOCK_SIZE       = 256;  
-constexpr int K_STEP           = 64;
+constexpr int K_STEP           = 128;
 constexpr int REG_BLOCK_M      = BLOCK_SIZE / 2;
 constexpr int REG_BLOCK_N      = BLOCK_SIZE / 4;
 constexpr int DOT_SLICE        = 64;
@@ -22,9 +23,9 @@ constexpr int DOT_SLICE        = 64;
 #define NUM_WARPS 8
 #define NUM_THREADS (kittens::WARP_THREADS * NUM_WARPS)
 
-#define M 1024
-#define K 1024
-#define N 1024
+#define M 8192
+#define K 8192
+#define N 8192
 
 using _gl_A = gl<fp6_e2m3, -1, -1, -1, -1>;
 using _gl_B = gl<fp6_e2m3, -1, -1, -1, -1>;
@@ -125,7 +126,21 @@ void micro_tk(const micro_globals g) {
         __builtin_amdgcn_s_setprio(1);
         mma_ABt(C_accum, A_tile, B_tile, C_accum);
         __builtin_amdgcn_s_setprio(0);
-        __builtin_amdgcn_s_barrier();  
+        __builtin_amdgcn_s_barrier();
+        
+        // Cluster 2
+        load_lds_reg_row(B_tile, subtile_inplace<REG_BLOCK_N, DOT_SLICE>(Bs[tic], {warp_col, 1}));
+        load_lds_reg_row(A_tile, subtile_inplace<REG_BLOCK_M, DOT_SLICE>(As[tic], {warp_row, 1}));
+        __builtin_amdgcn_s_waitcnt(0);
+        __builtin_amdgcn_s_barrier();
+
+        // Cluster 3 (compute)
+        asm volatile("s_waitcnt lgkmcnt(0)");
+        __builtin_amdgcn_s_setprio(1);
+        mma_ABt(C_accum, A_tile, B_tile, C_accum);
+        __builtin_amdgcn_s_setprio(0);
+        __builtin_amdgcn_s_barrier();
+    
     }
 
     // Epilogue
@@ -136,6 +151,19 @@ void micro_tk(const micro_globals g) {
     __builtin_amdgcn_s_barrier();    
 
     // Cluster 1
+    asm volatile("s_waitcnt lgkmcnt(0)");
+    __builtin_amdgcn_s_setprio(1);
+    mma_ABt(C_accum, A_tile, B_tile, C_accum);
+    __builtin_amdgcn_s_setprio(0);
+    __builtin_amdgcn_s_barrier();
+
+    // Cluster 2 (load)
+    __builtin_amdgcn_s_barrier();
+    load_lds_reg_row(B_tile, subtile_inplace<REG_BLOCK_N, DOT_SLICE>(Bs[tic], {warp_col, 1}));
+    load_lds_reg_row(A_tile, subtile_inplace<REG_BLOCK_M, DOT_SLICE>(As[tic], {warp_row, 1}));
+    __builtin_amdgcn_s_barrier();
+
+    // Cluster 3 (compute)
     asm volatile("s_waitcnt lgkmcnt(0)");
     __builtin_amdgcn_s_setprio(1);
     mma_ABt(C_accum, A_tile, B_tile, C_accum);
@@ -153,7 +181,8 @@ void micro_tk(const micro_globals g) {
 int main() {
     std::cout << "=== Simple MFMA Test ===\n";
     
-    din *h_input = new din[M * K];
+    din *h_input_a = new din[M * K];
+    din *h_input_b = new din[N * K];
     dout *h_output = new dout[M * N];
 
     // Benchmarking variables
@@ -168,30 +197,33 @@ int main() {
     // random number generator
     std::random_device rd;
     std::mt19937 gen(rd());
-    std::uniform_real_distribution<> dis(0.0f, 3.3f);
+    std::uniform_real_distribution<> dis(-0.0f, 1.0f);
 
     // Initialize with different values
     for (int i = 0; i < M * K; i++) {
-        h_input[i] = din(dis(gen));
+        h_input_a[i] = din(dis(gen));
+    }
+    for (int i = 0; i < N * K; i++) {  
+        h_input_b[i] = din(dis(gen));
     }
 
     din *d_input_a;
     din *d_input_b;
     dout *d_output;
     hipMalloc(&d_input_a, M * K * sizeof(din));
-    hipMalloc(&d_input_b, K * N * sizeof(din));
+    hipMalloc(&d_input_b, N * K * sizeof(din));
     hipMalloc(&d_output, M * N * sizeof(dout));
 
-    hipMemcpy(d_input_a, h_input, M * K * sizeof(din), hipMemcpyHostToDevice);
-    hipMemcpy(d_input_b, h_input, K * N * sizeof(din), hipMemcpyHostToDevice);
+    hipMemcpy(d_input_a, h_input_a, M * K * sizeof(din), hipMemcpyHostToDevice);
+    hipMemcpy(d_input_b, h_input_b, N * K * sizeof(din), hipMemcpyHostToDevice);
 
     _gl_A input_gl_a(d_input_a, 1, 1, M, K);
-    _gl_B input_gl_b(d_input_b, 1, 1, K, N);
+    _gl_B input_gl_b(d_input_b, 1, 1, N, K);
     _gl_C output_gl(d_output, 1, 1, M, N);
     micro_globals globals{input_gl_a, input_gl_b, output_gl};
 
     // Warmup
-    const int WARMUP_REPS = 10;
+    const int WARMUP_REPS = 1;
     for (int r = 0; r < WARMUP_REPS; ++r) { 
         micro_tk<<<globals.grid(), globals.block(), globals.dynamic_shared_memory(), stream>>>(globals);
     }
@@ -224,26 +256,39 @@ int main() {
 
     // CPU reference: compute A * A^T 
     float *cpu_result = new float[M * N];
+    #pragma omp parallel for collapse(2)
     for (int i = 0; i < M; i++) {
         for (int j = 0; j < N; j++) {
-            cpu_result[i * N + j] = 0.0f;
+            float sum = 0.0f;
             for (int k = 0; k < K; k++) {
-                cpu_result[i * N + j] += float(h_input[i * K + k]) * float(h_input[j * K + k]);
+                sum += float(h_input_a[i * K + k]) * float(h_input_b[j * K + k]);
             }
+            cpu_result[i * N + j] = sum;
         }
     }
     
     // Compare results
     int errors = 0;
     int num_printed = 0;
+    int num_printed_correct = 0;
     for (int i = 0; i < M * N; i++) {
         float h_output_float = float(h_output[i]);
-        if (std::abs(cpu_result[i] - h_output_float) > 0.1*std::abs(cpu_result[i])) {
-            errors++;
+        const float rtol = 0.1f;   // ~u with a little margin
+        const float atol = 1e-2f;   // floor for tiny expected values
+        float diff = fabs(cpu_result[i] - h_output[i]);
+        float threshold = rtol * fabs(cpu_result[i]) + atol;
+        if (diff > threshold) {
+            ++errors;
             if (num_printed < 5) {
                 std::cout << "[" << i << "] CPU: " << cpu_result[i] << " GPU: " << h_output_float 
-                          << " (diff: " << std::abs(cpu_result[i] - h_output_float) << ")\n";
+                          << " (diff: " << diff << " / threshold: " << threshold << ")\n";
                 num_printed++;
+            }
+        } else {
+            if (num_printed_correct < 5) {
+                std::cout << "[" << i << "] CPU: " << cpu_result[i] << " GPU: " << h_output_float 
+                          << " (diff: " << diff << " / threshold: " << threshold << ")\n";
+                num_printed_correct++;
             }
         }
     }
@@ -259,6 +304,8 @@ int main() {
     hipFree(d_input_a);
     hipFree(d_input_b);
     hipFree(d_output);
-    delete[] h_input;
+    delete[] h_input_a;
+    delete[] h_input_b;
     delete[] h_output;
 }
+
