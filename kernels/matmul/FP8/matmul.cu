@@ -15,7 +15,7 @@ struct TimingResult {
 
 // #define DUMP_TO_CSV
 
-// #define PROFILE
+#define PROFILE
 
 #define HipCheckError()    __hipCheckError( __FILE__, __LINE__ )
 inline void __hipCheckError( const char *file, const int line ) {
@@ -57,141 +57,7 @@ void dump_to_csv(const char* filename, const T& data, int rows, int cols) {
 }
 
 template <int M, int N, int K>
-__global__ void matmul_device_ref(const kittens::gl<fp8e4m3, 1, 1, M, K> A, const kittens::gl<fp8e4m3, 1, 1, N, K> B, const kittens::gl<float, 1, 1, M, N> C) {
-    static_assert(M % 64 == 0, "M must be a multiple of 64");
-    static_assert(N % 64 == 0, "N must be a multiple of 64");
-    static_assert(K % 64 == 0, "K must be a multiple of 64");
-
-    constexpr int k_iters = K / 64;
-    constexpr int n_iters = N / 64; // thread-block iters
-    constexpr int m_iters = M / 64; // thread-block iters
-
-    rt_fp8e4m3<32, 64> a;
-    rt_fp8e4m3<32, 64> b;
-    rt_fl<32, 32, kittens::ducks::rt_layout::accumulator> c;
-
-    constexpr int total_iters = n_iters * m_iters;
-
-    for (int i = blockIdx.x; i < total_iters; i += gridDim.x) {
-        constexpr int warps_per_block_dim = 2;
-        // Convert linear block index to 2D coordinates in the grid
-        int block_m = i / n_iters;  // which row of blocks
-        int block_n = i % n_iters;  // which column of blocks
-        
-        // Map warps within the block to sub-blocks
-        int i_m = block_m * warps_per_block_dim + warpid() / warps_per_block_dim;
-        int i_n = block_n * warps_per_block_dim + warpid() % warps_per_block_dim;
-
-        zero(c);
-        for (int k = 0; k < k_iters; k++) {
-            load(a, A, {0, 0, i_m, k});
-            load(b, B, {0, 0, i_n, k});
-            mma_ABt(c, a, b, c);
-            store(C, c, {0, 0, i_m, i_n});
-        }
-    }
-}
-
-template <int M, int N, int K, int CUs>
-TimingResult matmul_ref(const std::vector<fp8e4m3>& a, const std::vector<fp8e4m3>& b, std::vector<float>& c, 
-                       int warmup_iters = 3, int timing_iters = 20) {
-    constexpr int threads_per_warp = 64;
-    constexpr int warps_per_cu = 4;
-    constexpr int threads_per_block = threads_per_warp * warps_per_cu;
-
-    // Ensure input vectors have correct size
-    if (a.size() != M * K) {
-        fprintf(stderr, "Error: Input vector 'a' size %zu does not match expected M*K=%d\n", a.size(), M*K);
-        return {0, 0, 0, 0, 0};
-    }
-    if (b.size() != N * K) {
-        fprintf(stderr, "Error: Input vector 'b' size %zu does not match expected N*K=%d\n", b.size(), N*K);
-        return {0, 0, 0, 0, 0};
-    }
-
-    // Resize output vector
-    c.resize(M * N);
-
-    // Allocate device memory
-    fp8e4m3 *d_a, *d_b;
-    float *d_c;
-    hipMalloc(&d_a, M*K*sizeof(fp8e4m3));
-    hipMalloc(&d_b, N*K*sizeof(fp8e4m3));
-    hipMalloc(&d_c, M*N*sizeof(float));
-    HipCheckError();
-
-    // Copy data to device
-    hipMemcpy(d_a, a.data(), M*K*sizeof(fp8e4m3), hipMemcpyHostToDevice);
-    hipMemcpy(d_b, b.data(), N*K*sizeof(fp8e4m3), hipMemcpyHostToDevice);
-    hipMemset(d_c, 0, M*N*sizeof(float));
-    HipCheckError();
-
-    // Create global memory objects
-    kittens::gl<fp8e4m3, 1, 1, M, K> A(d_a, nullptr, nullptr, nullptr, nullptr);
-    kittens::gl<fp8e4m3, 1, 1, N, K> B(d_b, nullptr, nullptr, nullptr, nullptr);
-    kittens::gl<float, 1, 1, M, N> C(d_c, nullptr, nullptr, nullptr, nullptr);
-    
-    // Warmup iterations
-    for (int i = 0; i < warmup_iters; i++) {
-        hipMemset(d_c, 0, M*N*sizeof(float));
-        matmul_device_ref<M, N, K><<<CUs, threads_per_block>>>(A, B, C);
-        hipDeviceSynchronize();
-    }
-    
-    // Create HIP events for precise kernel timing
-    hipEvent_t start_event, stop_event;
-    hipEventCreate(&start_event);
-    hipEventCreate(&stop_event);
-    
-    // Timed kernel-only loop
-    std::vector<float> times_ms;
-    times_ms.reserve(timing_iters);
-    for (int r = 0; r < timing_iters; ++r) {
-        hipMemset(d_c, 0, M*N*sizeof(float));
-        hipEventRecord(start_event, 0);
-        matmul_device_ref<M, N, K><<<CUs, threads_per_block>>>(A, B, C);
-        hipEventRecord(stop_event, 0);
-        hipEventSynchronize(stop_event);
-        float ms = 0.0f;
-        hipEventElapsedTime(&ms, start_event, stop_event);
-        times_ms.push_back(ms);
-    }
-    
-    // Calculate best and average times
-    float sum_ms = 0.f, best_ms = 1e30f;
-    for (float t : times_ms) { 
-        sum_ms += t; 
-        best_ms = std::min(best_ms, t); 
-    }
-    float avg_ms = sum_ms / times_ms.size();
-    
-    // Calculate TFLOPS (2*M*N*K operations)
-    double total_ops = 2.0 * M * N * K;
-    double best_tflops = (total_ops / (best_ms * 1e-3)) / 1e12;
-    double avg_tflops = (total_ops / (avg_ms * 1e-3)) / 1e12;
-    
-    // Cleanup events
-    hipEventDestroy(start_event);
-    hipEventDestroy(stop_event);
-    HipCheckError();
-
-    // Copy result back to host
-    hipMemcpy(c.data(), d_c, M*N*sizeof(float), hipMemcpyDeviceToHost);
-    HipCheckError();
-
-    // Free device memory
-    hipFree(d_a);
-    hipFree(d_b);
-    hipFree(d_c);
-    HipCheckError();
-    
-    return {best_ms, avg_ms, best_tflops, avg_tflops, timing_iters};
-}
-
-#endif
-
-template <int M, int N, int K>
-__global__ __launch_bounds__(512, 2) void matmul_device(const kittens::gl<fp8e4m3, 1, 1, M, K> A, const kittens::gl<fp8e4m3, 1, 1, N, K> B, const kittens::gl<float, 1, 1, M, N> C) {
+__global__ __launch_bounds__(512, 2) void matmul_device_ref(const kittens::gl<fp8e4m3, 1, 1, M, K> A, const kittens::gl<fp8e4m3, 1, 1, N, K> B, const kittens::gl<float, 1, 1, M, N> C) {
     // Each threadblock computes 256x256 output tile
     constexpr int WARPS_COL = 2;
     constexpr int WARPS_ROW = 4;
@@ -272,6 +138,176 @@ __global__ __launch_bounds__(512, 2) void matmul_device(const kittens::gl<fp8e4m
 }
 
 template <int M, int N, int K, int CUs>
+TimingResult matmul_ref(const std::vector<fp8e4m3>& a, const std::vector<fp8e4m3>& b, std::vector<float>& c, 
+                        int warmup_iters = 3, int timing_iters = 20) {
+    constexpr int threads_per_warp = 64;
+    constexpr int warps_per_cu = 8;
+    constexpr int threads_per_block = threads_per_warp * warps_per_cu;
+    
+    // Ensure input vectors have correct size
+    if (a.size() != M * K) {
+        fprintf(stderr, "Error: Input vector 'a' size %zu does not match expected M*K=%d\n", a.size(), M*K);
+        return {0, 0, 0, 0, 0};
+    }
+    if (b.size() != N * K) {
+        fprintf(stderr, "Error: Input vector 'b' size %zu does not match expected N*K=%d\n", b.size(), N*K);
+        return {0, 0, 0, 0, 0};
+    }
+    
+    // Resize output vector
+    c.resize(M * N);
+    
+    // Allocate device memory
+    fp8e4m3 *d_a, *d_b;
+    float *d_c;
+    hipMalloc(&d_a, M*K*sizeof(fp8e4m3));
+    hipMalloc(&d_b, N*K*sizeof(fp8e4m3));
+    hipMalloc(&d_c, M*N*sizeof(float));
+    HipCheckError();
+    
+    // Copy data to device
+    hipMemcpy(d_a, a.data(), M*K*sizeof(fp8e4m3), hipMemcpyHostToDevice);
+    hipMemcpy(d_b, b.data(), N*K*sizeof(fp8e4m3), hipMemcpyHostToDevice);
+    hipMemset(d_c, 0, M*N*sizeof(float));
+    HipCheckError();
+    
+    // Create global memory objects
+    kittens::gl<fp8e4m3, 1, 1, M, K> A(d_a, nullptr, nullptr, nullptr, nullptr);
+    kittens::gl<fp8e4m3, 1, 1, N, K> B(d_b, nullptr, nullptr, nullptr, nullptr);
+    kittens::gl<float, 1, 1, M, N> C(d_c, nullptr, nullptr, nullptr, nullptr);
+    
+    // Warmup iterations
+    for (int i = 0; i < warmup_iters; i++) {
+        hipMemset(d_c, 0, M*N*sizeof(float));
+        matmul_device_ref<M, N, K><<<CUs, threads_per_block>>>(A, B, C);
+        hipDeviceSynchronize();
+    }
+    
+    // Create HIP events for precise kernel timing
+    hipEvent_t start_event, stop_event;
+    hipEventCreate(&start_event);
+    hipEventCreate(&stop_event);
+    
+    // Timed kernel-only loop
+    std::vector<float> times_ms;
+    times_ms.reserve(timing_iters);
+    for (int r = 0; r < timing_iters; ++r) {
+        hipMemset(d_c, 0, M*N*sizeof(float));
+        hipEventRecord(start_event, 0);
+        matmul_device_ref<M, N, K><<<CUs, threads_per_block>>>(A, B, C);
+        hipEventRecord(stop_event, 0);
+        hipEventSynchronize(stop_event);
+        float ms = 0.0f;
+        hipEventElapsedTime(&ms, start_event, stop_event);
+        times_ms.push_back(ms);
+    }
+    
+    // Calculate best and average times
+    float sum_ms = 0.f, best_ms = 1e30f;
+    for (float t : times_ms) { 
+        sum_ms += t; 
+        best_ms = std::min(best_ms, t); 
+    }
+    float avg_ms = sum_ms / times_ms.size();
+    
+    // Calculate TFLOPS (2*M*N*K operations)
+    double total_ops = 2.0 * M * N * K;
+    double best_tflops = (total_ops / (best_ms * 1e-3)) / 1e12;
+    double avg_tflops = (total_ops / (avg_ms * 1e-3)) / 1e12;
+    
+    // Cleanup events
+    hipEventDestroy(start_event);
+    hipEventDestroy(stop_event);
+    HipCheckError();
+    
+    // Copy result back to host
+    hipMemcpy(c.data(), d_c, M*N*sizeof(float), hipMemcpyDeviceToHost);
+    HipCheckError();
+    
+    // Free device memory
+    hipFree(d_a);
+    hipFree(d_b);
+    hipFree(d_c);
+    HipCheckError();
+    
+    return {best_ms, avg_ms, best_tflops, avg_tflops, timing_iters};
+}
+
+#endif
+
+template <int M, int N, int K>
+__global__ __launch_bounds__(512, 2) void matmul_device(const kittens::gl<fp8e4m3, 1, 1, M, K> A, const kittens::gl<fp8e4m3, 1, 1, N, K> B, const kittens::gl<float, 1, 1, M, N> C) {
+    // Each threadblock computes 256x256 output tile
+    constexpr int WARPS_COL = 2;
+    constexpr int WARPS_ROW = 4;
+    constexpr int BLOCK_SIZE_ROW = 256;
+    constexpr int BLOCK_SIZE_COL = 256;
+    constexpr int BLOCK_K = 64;
+    constexpr int blocks_per_row = M / BLOCK_SIZE_ROW; // Number of blocks per matrix row
+    constexpr int blocks_per_col = N / BLOCK_SIZE_COL; // Number of blocks per matrix col
+    constexpr int total_blocks_needed = blocks_per_row * blocks_per_col; // Total blocks needed
+    constexpr int k_iters = K / BLOCK_K; // K iterations
+
+    // Shared memory tiles: 128x64 for A and B
+    __shared__ st<fp8e4m3, BLOCK_SIZE_ROW, BLOCK_K> As;
+    __shared__ st<fp8e4m3, BLOCK_SIZE_COL, BLOCK_K> Bs;
+
+    // Register tiles: 64x64 per warp
+    rt_fp8e4m3<BLOCK_SIZE_ROW / WARPS_ROW, BLOCK_K> a;
+    rt_fp8e4m3<BLOCK_SIZE_COL / WARPS_COL, BLOCK_K> b;
+    rt_fl<BLOCK_SIZE_ROW / WARPS_ROW, BLOCK_SIZE_COL / WARPS_COL, kittens::ducks::rt_layout::accumulator> c;
+
+    // Calculate which block this threadblock should work on
+    int global_block_id = blockIdx.x;
+
+    // Convert linear block ID to 2D coordinates
+    int block_row = global_block_id / blocks_per_col;
+    int block_col = global_block_id % blocks_per_col;
+    int block_m = block_row * BLOCK_SIZE_ROW;
+    int block_n = block_col * BLOCK_SIZE_COL;
+
+    // Warp arrangement within threadblock: 4x2 warps covering 256x256
+    int warp_m = (warpid() / 2); // warp row: 0 to 3
+    int warp_n = (warpid() % 2); // warp col: 0 to 1
+
+    zero(c);
+
+    // Inner loop over K dimension
+    for (int k = 0; k < k_iters; k++) {
+        // Cooperatively load 128x64 tiles into shared memory
+        // All 4 warps participate in loading
+        load<2, false, kittens::ducks::rt_layout::row>(As, A, {0, 0, block_row, k});
+        load<2, false, kittens::ducks::rt_layout::row>(Bs, B, {0, 0, block_col, k});
+
+        // CRITICAL: Ensure all warps complete loading before any reads from shared memory
+        __builtin_amdgcn_s_waitcnt(0);
+        __builtin_amdgcn_s_barrier();
+        __builtin_amdgcn_sched_barrier(0);
+
+        // Each warp loads its 64x64 portion from shared memory using subtiles
+        auto as_subtile = kittens::subtile_inplace<BLOCK_SIZE_ROW / WARPS_ROW, BLOCK_K>(As, {warp_m, 0});
+        auto bs_subtile = kittens::subtile_inplace<BLOCK_SIZE_COL / WARPS_COL, BLOCK_K>(Bs, {warp_n, 0});
+        load(a, as_subtile);
+        load(b, bs_subtile);
+
+        // Ensure shared-to-register loads complete before MMA
+        __builtin_amdgcn_s_waitcnt(0);
+        __builtin_amdgcn_sched_barrier(0);
+
+        // Compute: C += A * B^T
+        mma_ABt(c, a, b, c);
+        
+        // CRITICAL: Ensure all warps finish using shared memory before next iteration overwrites
+        __builtin_amdgcn_s_waitcnt(0);
+        __builtin_amdgcn_s_barrier();
+        __builtin_amdgcn_sched_barrier(0);
+    }
+
+    // Store result: each warp stores its 64x64 result
+    store(C, c, {0, 0, block_row * 4 + warp_m, block_col * 2 + warp_n});
+}
+
+template <int M, int N, int K, int CUs>
 TimingResult matmul_host(const std::vector<fp8e4m3>& a, const std::vector<fp8e4m3>& b, std::vector<float>& c, 
                         int warmup_iters = 3, int timing_iters = 20) {
     constexpr int threads_per_warp = 64;
@@ -313,7 +349,7 @@ TimingResult matmul_host(const std::vector<fp8e4m3>& a, const std::vector<fp8e4m
     // Warmup iterations
     for (int i = 0; i < warmup_iters; i++) {
         hipMemset(d_c, 0, M*N*sizeof(float));
-        matmul_device<M, N, K><<<CUs, threads_per_block>>>(A, B, C);
+        matmul_device<M, N, K><<<1024, threads_per_block>>>(A, B, C);
         hipDeviceSynchronize();
     }
     
@@ -328,7 +364,7 @@ TimingResult matmul_host(const std::vector<fp8e4m3>& a, const std::vector<fp8e4m
     for (int r = 0; r < timing_iters; ++r) {
         hipMemset(d_c, 0, M*N*sizeof(float));
         hipEventRecord(start_event, 0);
-        matmul_device<M, N, K><<<CUs, threads_per_block>>>(A, B, C);
+        matmul_device<M, N, K><<<1024, threads_per_block>>>(A, B, C);
         hipEventRecord(stop_event, 0);
         hipEventSynchronize(stop_event);
         float ms = 0.0f;
