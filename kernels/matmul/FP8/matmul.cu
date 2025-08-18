@@ -15,7 +15,7 @@ struct TimingResult {
 
 // #define DUMP_TO_CSV
 
-#define PROFILE
+// #define PROFILE
 
 #define HipCheckError()    __hipCheckError( __FILE__, __LINE__ )
 inline void __hipCheckError( const char *file, const int line ) {
@@ -267,8 +267,8 @@ __global__ __launch_bounds__(512, 2) void matmul_device(const kittens::gl<fp8e4m
     int block_n = block_col * BLOCK_SIZE_COL;
 
     // Warp arrangement within threadblock: 4x2 warps covering 256x256
-    int warp_m = (warpid() / 2); // warp row: 0 to 3
-    int warp_n = (warpid() % 2); // warp col: 0 to 1
+    int warp_m = (warpid() / WARPS_COL); // warp row: 0 to 3
+    int warp_n = (warpid() % WARPS_COL); // warp col: 0 to 1
 
     zero(c);
 
@@ -279,32 +279,23 @@ __global__ __launch_bounds__(512, 2) void matmul_device(const kittens::gl<fp8e4m
         load<2, false, kittens::ducks::rt_layout::row>(As, A, {0, 0, block_row, k});
         load<2, false, kittens::ducks::rt_layout::row>(Bs, B, {0, 0, block_col, k});
 
-        // CRITICAL: Ensure all warps complete loading before any reads from shared memory
-        __builtin_amdgcn_s_waitcnt(0);
-        __builtin_amdgcn_s_barrier();
-        __builtin_amdgcn_sched_barrier(0);
+        __builtin_amdgcn_s_barrier();  // synchronizes all warps
+        __builtin_amdgcn_sched_barrier(0); // stops compiler from reordering ops
 
-        // Each warp loads its 64x64 portion from shared memory using subtiles
         auto as_subtile = kittens::subtile_inplace<BLOCK_SIZE_ROW / WARPS_ROW, BLOCK_K>(As, {warp_m, 0});
         auto bs_subtile = kittens::subtile_inplace<BLOCK_SIZE_COL / WARPS_COL, BLOCK_K>(Bs, {warp_n, 0});
         load(a, as_subtile);
         load(b, bs_subtile);
 
-        // Ensure shared-to-register loads complete before MMA
-        __builtin_amdgcn_s_waitcnt(0);
+        __builtin_amdgcn_s_barrier();
         __builtin_amdgcn_sched_barrier(0);
 
         // Compute: C += A * B^T
         mma_ABt(c, a, b, c);
-        
-        // CRITICAL: Ensure all warps finish using shared memory before next iteration overwrites
-        __builtin_amdgcn_s_waitcnt(0);
-        __builtin_amdgcn_s_barrier();
-        __builtin_amdgcn_sched_barrier(0);
     }
 
     // Store result: each warp stores its 64x64 result
-    store(C, c, {0, 0, block_row * 4 + warp_m, block_col * 2 + warp_n});
+    store(C, c, {0, 0, block_row * WARPS_ROW + warp_m, block_col * WARPS_COL + warp_n});
 }
 
 template <int M, int N, int K, int CUs>
@@ -350,6 +341,7 @@ TimingResult matmul_host(const std::vector<fp8e4m3>& a, const std::vector<fp8e4m
     for (int i = 0; i < warmup_iters; i++) {
         hipMemset(d_c, 0, M*N*sizeof(float));
         matmul_device<M, N, K><<<1024, threads_per_block>>>(A, B, C);
+        HipCheckError();
         hipDeviceSynchronize();
     }
     
@@ -370,6 +362,7 @@ TimingResult matmul_host(const std::vector<fp8e4m3>& a, const std::vector<fp8e4m
         float ms = 0.0f;
         hipEventElapsedTime(&ms, start_event, stop_event);
         times_ms.push_back(ms);
+        HipCheckError();
     }
     
     // Calculate best and average times
@@ -455,8 +448,13 @@ int main() {
     constexpr int CUs = 256; // 256 threadblocks (1 outer iteration)
     
     // Timing parameters to keep total runtime reasonable  
+    #ifdef PROFILE
+    constexpr int warmup_iters = 2;
+    constexpr int timing_iters = 1;
+    #else
     constexpr int warmup_iters = 2;
     constexpr int timing_iters = 20;
+    #endif
 
     printf("Matrix dimensions: %dx%dx%d, CUs: %d\n", M, N, K, CUs);
     printf("Warmup iterations: %d, Timing iterations: %d\n\n", warmup_iters, timing_iters);
