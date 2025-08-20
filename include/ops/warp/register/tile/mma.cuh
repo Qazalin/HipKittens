@@ -184,13 +184,13 @@ __device__ static inline void mma_AtB_base(rt_base<float, ducks::rt_layout::accu
                                         const rt_base<float, ducks::rt_layout::accumulator> &c) {
     mfma323216(d.data, a.data, b.data, c.data);
 }
-__device__ static inline void mma_AtB_accum_base(rt_base<float, ducks::rt_layout::accumulator> &d,
+__device__ static inline void mma_AtB_base(rt_base<float, ducks::rt_layout::accumulator> &d,
                                         const rt_base<half, ducks::rt_layout::accumulator> &a,
                                         const rt_base<half, ducks::rt_layout::accumulator> &b, // in col-major mode
                                         const rt_base<float, ducks::rt_layout::accumulator> &c) {
     mfma323216(d.data, a.data, b.data, c.data);
 }
-__device__ static inline void mma_AtB_accum_base(rt_base<float, ducks::rt_layout::accumulator> &d,
+__device__ static inline void mma_AtB_base(rt_base<float, ducks::rt_layout::accumulator> &d,
                                         const rt_base<bf16, ducks::rt_layout::accumulator> &a,
                                         const rt_base<bf16, ducks::rt_layout::accumulator> &b, // in col-major mode
                                         const rt_base<float, ducks::rt_layout::accumulator> &c) {
@@ -420,7 +420,7 @@ __device__ static inline void mma_AtB(D &d,
 
 #ifdef KITTENS_CDNA4
 template<ducks::rt::accumulator_layout D, ducks::rt::accumulator_layout A, ducks::rt::accumulator_layout B, ducks::rt::accumulator_layout C>
-__device__ static inline void mma_AtB_accum(D &d,
+__device__ static inline void mma_AtB(D &d,
                                 const A &a,
                                 const B &b,
                                 const C &c) {
@@ -439,7 +439,7 @@ __device__ static inline void mma_AtB_accum(D &d,
     for(int n = 0; n < D::height; n++) {
         #pragma unroll
         for(int m = 0; m < D::width; m++) {
-            mma_AtB_accum_base(
+            mma_AtB_base(
                 d.tiles[n][m],
                 a.tiles[0][n],
                 b.tiles[0][m],
@@ -447,7 +447,7 @@ __device__ static inline void mma_AtB_accum(D &d,
             );
             #pragma unroll
             for(int k = 1; k < A::height; k++) {
-                mma_AtB_accum_base(
+                mma_AtB_base(
                     d.tiles[n][m],
                     a.tiles[k][n],
                     b.tiles[k][m],

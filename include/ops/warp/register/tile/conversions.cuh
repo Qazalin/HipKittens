@@ -463,6 +463,22 @@ __device__ static inline rt<T2, _rows, _cols, layout>& transpose_inplace(rt<T2, 
     return tile;
 }
 
+#ifdef KITTENS_CDNA4
+template<typename T2, int _rows, int _cols, ducks::rt_layout::all layout>
+__device__ static inline void swap_layout_and_transpose(rt<T2, _cols, _rows, typename ducks::rt_layout::transpose<layout>::type> &result, const rt<T2, _rows, _cols, layout> &tile) {
+    #pragma unroll
+    for (int i = 0; i < tile.height; i++) {
+        #pragma unroll
+        for (int j = 0; j < tile.width; j++) {
+            #pragma unroll
+            for (int k = 0; k < tile.packed_per_tile; k++) {
+                result.tiles[j][i].data[k] = tile.tiles[i][j].data[k];
+            }
+        }
+    }
+}
+#endif
+
 /* ----------  TYPE SWAPS  ---------- */
 
 /**

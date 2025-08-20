@@ -18,13 +18,6 @@ __device__ inline int get_accum_thread_row_offset(int row) {
             | ( row & 3 );       // bits-0..1 unchanged
 }
 
-enum class coherency {
-	cache_all = 0,
-	cache_global = 1,
-	cache_stream = 2,
-	non_temporal = 3
-};
-
 using as3_uint32_ptr = uint32_t __attribute__((address_space(3)))*;
 using index_t = int;
 using int32x4_t = int32_t __attribute__((ext_vector_type(4)));
@@ -131,10 +124,9 @@ __device__ static inline void load(ST &dst, const GL &src, const COORD &idx) {
 
 template<int axis, bool assume_aligned,
          ducks::st::all ST, ducks::gl::all GL,
-         ducks::coord::tile COORD = coord<ST>,
          int N_THREADS = WARP_THREADS>
 __device__ inline void prefill_swizzled_offsets(
-    const GL& src, const COORD& idx, ST& dst, uint32_t* swizzled_offsets)
+    ST& dst, const GL& src, uint32_t* swizzled_offsets)
 {
 
     using T = typename ST::dtype;
