@@ -78,14 +78,14 @@ def generate_tensor(shape, mean, std, dtype, device):
     return scaled_tensor.contiguous()
 
 def generate_inputs():
-    mean = 1 #1e-1
+    mean = 5 #1e-1
     std = 0.1  # REDUCED from 10 to 0.1 for numerical stability
     
     # Generate in BHND format (batch, heads, seq, dim) for reference
     Q = generate_tensor((b, h, n, d), mean, std, torch.bfloat16, 'cuda')
     K = generate_tensor((b, h, n, d), mean, std, torch.bfloat16, 'cuda')
     V = generate_tensor((b, h, n, d), mean, std, torch.bfloat16, 'cuda')
-    dO = generate_tensor((b, h, n, d), mean, std, torch.bfloat16, 'cuda') * 10
+    dO = generate_tensor((b, h, n, d), mean, std, torch.bfloat16, 'cuda') * 50
 
     Q.requires_grad_(True)
     K.requires_grad_(True)
@@ -164,9 +164,10 @@ print(f"m_tiled.shape={m_tiled.shape}")
 print(f"l_tiled.shape={l_tiled.shape}")
 
 # TK
-print("Running TK ...")
+print("Running TK dQ ...")
 dQ_tk = torch.zeros_like(q_grad_tiled_bhnd)
-O_tk = torch.zeros_like(out_tiled_bhnd)
+O_tk = O_tiled.clone()
+dO_tk = dO_tiled.clone()
 tk_kernel.dispatch_micro(
     Q_tk,     # Qg
     K_tk,     # Kg
@@ -174,6 +175,21 @@ tk_kernel.dispatch_micro(
     O_tk,     # Og
     dO_tk,    # dOg
     dQ_tk,   # dQg (output)
+    m_tiled.unsqueeze(-1),  # m_vec
+    l_tiled.unsqueeze(-1)   # l_vec
+)
+
+print("Running TK dK, dV ...")
+dK_tk = torch.zeros_like(k_grad_tiled_bhnd)
+dV_tk = torch.zeros_like(v_grad_tiled_bhnd)
+tk_kernel.dispatch_bwd_dkv(
+    Q_tk,     # Qg
+    K_tk,     # Kg
+    V_tk,     # Vg
+    O_tk,     # Og
+    dO_tk,    # dOg
+    dK_tk,   # dKg (output)
+    dV_tk,   # dVg (output)
     m_tiled.unsqueeze(-1),  # m_vec
     l_tiled.unsqueeze(-1)   # l_vec
 )
@@ -209,10 +225,13 @@ print(f"V grad max error: {v_grad_tiled_diff.max().item():.6f}")
 
 # TK vs PyTorch
 print(f"\nTK vs PyTorch comparison:")
-# out_tk_diff = (O_tk - out_pytorch).abs()
 q_grad_tk_diff = (dQ_tk - q_grad_pytorch).abs()
-# print(f"Output max error: {out_tk_diff.max().item():.6f}")
+k_grad_tk_diff = (dK_tk - k_grad_pytorch).abs()
+v_grad_tk_diff = (dV_tk - v_grad_pytorch).abs()
 print(f"Q grad max error: {q_grad_tk_diff.max().item():.6f}")
+print(f"K grad max error: {k_grad_tk_diff.max().item():.6f}")
+print(f"V grad max error: {v_grad_tk_diff.max().item():.6f}")
+
 
 print(dQ_tk[0, 0, 0, :16])
 print(q_grad_pytorch[0, 0, 0, :16], q_grad_pytorch.max())
