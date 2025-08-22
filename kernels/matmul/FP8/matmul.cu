@@ -15,7 +15,7 @@ struct TimingResult {
 
 // #define DUMP_TO_CSV
 
-// #define PROFILE
+#define PROFILE
 
 #define HipCheckError()    __hipCheckError( __FILE__, __LINE__ )
 inline void __hipCheckError( const char *file, const int line ) {
@@ -518,60 +518,96 @@ __global__ __launch_bounds__(256, 1) void matmul_device(const kittens::gl<fp8e4m
             /***** END MMA VARS *****/
 
             buffer_load_lds<T, ST, N_THREADS>(0, lds_base, srsrc, row_stride);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, c_mma, 0, 0, 0);
+
+            __builtin_amdgcn_sched_barrier(0);
 
             buffer_load_lds<T, ST, N_THREADS>(1, lds_base, srsrc, row_stride);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, d_mma, 0, 0, 1);
+
+            __builtin_amdgcn_sched_barrier(0);
 
             buffer_load_lds<T, ST, N_THREADS>(2, lds_base, srsrc, row_stride);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, c_mma, 0, 1, 0);
+
+            __builtin_amdgcn_sched_barrier(0);
 
             buffer_load_lds<T, ST, N_THREADS>(3, lds_base, srsrc, row_stride);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, d_mma, 0, 1, 1);
+
+            __builtin_amdgcn_sched_barrier(0);
 
             buffer_load_lds<T, ST, N_THREADS>(4, lds_base, srsrc, row_stride);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, c_mma, 0, 2, 0);
+
+            __builtin_amdgcn_sched_barrier(0);
 
             buffer_load_lds<T, ST, N_THREADS>(5, lds_base, srsrc, row_stride);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, d_mma, 0, 2, 1);
+
+            __builtin_amdgcn_sched_barrier(0);
 
             buffer_load_lds<T, ST, N_THREADS>(6, lds_base, srsrc, row_stride);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, c_mma, 0, 3, 0);
+
+            __builtin_amdgcn_sched_barrier(0);
 
             buffer_load_lds<T, ST, N_THREADS>(7, lds_base, srsrc, row_stride);
-
-            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, c_mma, 0, 0, 0);
-            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, d_mma, 0, 0, 1);
-            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, c_mma, 0, 1, 0);
-            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, d_mma, 0, 1, 1);
-            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, c_mma, 0, 2, 0);
-            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, d_mma, 0, 2, 1);
-            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, c_mma, 0, 3, 0);
             mma_ABt_base_wrapper(d_mma, a_mma, b_mma, d_mma, 0, 3, 1);
+
+            __builtin_amdgcn_sched_barrier(0);
 
             ds_read_128_bits<RT, ST_SUB, U>(dst_st_to_rt, addr_st_to_rt, 0, 0, 0);
             ds_read_128_bits<RT, ST_SUB, U>(dst_st_to_rt, addr_st_to_rt, 0, 0, 1);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, c_mma, 1, 0, 0);
+
+            __builtin_amdgcn_sched_barrier(0);
+
             ds_read_128_bits<RT, ST_SUB, U>(dst_st_to_rt, addr_st_to_rt, 0, 1, 0);
             ds_read_128_bits<RT, ST_SUB, U>(dst_st_to_rt, addr_st_to_rt, 0, 1, 1);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, d_mma, 1, 0, 1);
+
+            __builtin_amdgcn_sched_barrier(0);
 
             ds_read_128_bits<RT, ST_SUB, U>(dst_st_to_rt, addr_st_to_rt, 1, 0, 0);
             ds_read_128_bits<RT, ST_SUB, U>(dst_st_to_rt, addr_st_to_rt, 1, 0, 1);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, c_mma, 1, 1, 0);
+
+            __builtin_amdgcn_sched_barrier(0);
+
             ds_read_128_bits<RT, ST_SUB, U>(dst_st_to_rt, addr_st_to_rt, 1, 1, 0);
             ds_read_128_bits<RT, ST_SUB, U>(dst_st_to_rt, addr_st_to_rt, 1, 1, 1);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, d_mma, 1, 1, 1);
+
+            __builtin_amdgcn_sched_barrier(0);
 
             ds_read_128_bits<RT, ST_SUB, U>(dst_st_to_rt, addr_st_to_rt, 2, 0, 0);
             ds_read_128_bits<RT, ST_SUB, U>(dst_st_to_rt, addr_st_to_rt, 2, 0, 1);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, c_mma, 1, 2, 0);
+
+            __builtin_amdgcn_sched_barrier(0);
+
             ds_read_128_bits<RT, ST_SUB, U>(dst_st_to_rt, addr_st_to_rt, 2, 1, 0);
             ds_read_128_bits<RT, ST_SUB, U>(dst_st_to_rt, addr_st_to_rt, 2, 1, 1);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, d_mma, 1, 2, 1);
+
+            __builtin_amdgcn_sched_barrier(0);
 
             ds_read_128_bits<RT, ST_SUB, U>(dst_st_to_rt, addr_st_to_rt, 3, 0, 0);
             ds_read_128_bits<RT, ST_SUB, U>(dst_st_to_rt, addr_st_to_rt, 3, 0, 1);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, c_mma, 1, 3, 0);
+
+            __builtin_amdgcn_sched_barrier(0);
+
             ds_read_128_bits<RT, ST_SUB, U>(dst_st_to_rt, addr_st_to_rt, 3, 1, 0);
             ds_read_128_bits<RT, ST_SUB, U>(dst_st_to_rt, addr_st_to_rt, 3, 1, 1);
-
-
-            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, c_mma, 1, 0, 0);
-            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, d_mma, 1, 0, 1);
-            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, c_mma, 1, 1, 0);
-            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, d_mma, 1, 1, 1);
-            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, c_mma, 1, 2, 0);
-            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, d_mma, 1, 2, 1);
-            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, c_mma, 1, 3, 0);
             mma_ABt_base_wrapper(d_mma, a_mma, b_mma, d_mma, 1, 3, 1);
+
+            __builtin_amdgcn_sched_barrier(0);
         }
+
+
+        __builtin_amdgcn_sched_barrier(0);
 
         {
             // load<2, false, kittens::ducks::rt_layout::row, ST_B, kittens::gl<fp8e4m3, 1, 1, N, K>, coord<ST_B>, NUM_WARPS*WARP_THREADS>(Bs[curr], B, {0, 0, block_col, k + 2});
@@ -608,6 +644,9 @@ __global__ __launch_bounds__(256, 1) void matmul_device(const kittens::gl<fp8e4m
             buffer_load_lds<T, ST, N_THREADS>(7, lds_base, srsrc, row_stride);
         }
 
+
+        __builtin_amdgcn_sched_barrier(0);
+
         {
             // this is doing the kth mma
             // mma_ABt(c, a, b, c);
@@ -636,10 +675,16 @@ __global__ __launch_bounds__(256, 1) void matmul_device(const kittens::gl<fp8e4m
         }
 
 
+        __builtin_amdgcn_sched_barrier(0);
+
+
         auto bs_subtile_temp = kittens::subtile_inplace<BLOCK_SIZE_COL / WARPS_COL, k_step>(Bs[next], {warp_n, 0});
         load(b_temp, bs_subtile_temp);
 
         curr ^= 1; next ^= 1;
+
+
+        __builtin_amdgcn_sched_barrier(0);
 
         __builtin_amdgcn_s_waitcnt(0);
         __builtin_amdgcn_s_barrier();
@@ -650,7 +695,13 @@ __global__ __launch_bounds__(256, 1) void matmul_device(const kittens::gl<fp8e4m
         load<2, false, kittens::ducks::rt_layout::row, ST_A, kittens::gl<fp8e4m3, 1, 1, M, K>, coord<ST_A>, NUM_WARPS*WARP_THREADS>(As[curr], A, {0, 0, block_row, k + 3});
         load<2, false, kittens::ducks::rt_layout::row, ST_B, kittens::gl<fp8e4m3, 1, 1, N, K>, coord<ST_B>, NUM_WARPS*WARP_THREADS>(Bs[curr], B, {0, 0, block_col, k + 3});
 
+
+        __builtin_amdgcn_sched_barrier(0);
+
         mma_ABt(c, a_temp, b_temp, c);
+
+
+        __builtin_amdgcn_sched_barrier(0);
 
         // Load persistent registers for next iteration (k+2 data, no conditionals - always load)
         auto as_subtile_next = kittens::subtile_inplace<BLOCK_SIZE_ROW / WARPS_ROW, k_step>(As[next], {warp_m, 0});
