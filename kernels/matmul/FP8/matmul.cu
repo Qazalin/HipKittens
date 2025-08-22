@@ -351,6 +351,22 @@ __device__ inline void ds_read_128_bits(RT& dst, uint32_t addr, int i, int j, in
     );
 }
 
+template<typename D, typename A, typename B, typename C>
+__device__ inline void mma_ABt_base_wrapper(D& d_mma, const A& a_mma, const B& b_mma, const C& c_mma, int n, int m, int k) {
+    static_assert(D::rows == A::rows && D::cols == B::rows); // Check D matches A, B
+    static_assert(A::cols == B::cols); // Check reduction dim is same
+    static_assert(D::rows == C::rows && D::cols == C::cols); // Check D matches C
+    static_assert(std::is_same_v<typename D::T, float> && std::is_same_v<typename A::T, fp8e4m3> &&
+                  std::is_same_v<typename B::T, fp8e4m3> && std::is_same_v<typename C::T, float>);
+    
+    mma_ABt_base(
+        d_mma.tiles[n][m],
+        a_mma.tiles[n][k],
+        b_mma.tiles[m][k],
+        c_mma.tiles[n][m]
+    );
+}
+
 template <int M, int N, int K>
 __global__ __launch_bounds__(256, 1) void matmul_device(const kittens::gl<fp8e4m3, 1, 1, M, K> A, const kittens::gl<fp8e4m3, 1, 1, N, K> B, const kittens::gl<bf16, 1, 1, M, N> C) {
     constexpr int WARPS_COL = 2;
@@ -372,8 +388,9 @@ __global__ __launch_bounds__(256, 1) void matmul_device(const kittens::gl<fp8e4m
     using GL_B = kittens::gl<fp8e4m3, 1, 1, N, K>;
     using GL_C = kittens::gl<bf16, 1, 1, M, N>;
 
-    using RT_A = rt_fp8e4m3<BLOCK_SIZE_ROW / WARPS_ROW, k_step>; // 128x128
-    using RT_B = rt_fp8e4m3<BLOCK_SIZE_COL / WARPS_COL, k_step>; // 128x128
+    using RT_A = rt_fp8e4m3<BLOCK_SIZE_ROW / WARPS_ROW, k_step>; // 128x128 = 4x2
+    using RT_B = rt_fp8e4m3<BLOCK_SIZE_COL / WARPS_COL, k_step>; // 128x128 = 4x2
+    using RT_C = rt_fl<BLOCK_SIZE_ROW / WARPS_ROW, BLOCK_SIZE_COL / WARPS_COL, kittens::ducks::rt_layout::accumulator>; // 128x128 = 4x4
 
     __shared__ ST_A As[2];
     __shared__ ST_B Bs[2];
@@ -382,7 +399,7 @@ __global__ __launch_bounds__(256, 1) void matmul_device(const kittens::gl<fp8e4m
     RT_B b;
     RT_A a_temp;
     RT_B b_temp;
-    rt_fl<BLOCK_SIZE_ROW / WARPS_ROW, BLOCK_SIZE_COL / WARPS_COL, kittens::ducks::rt_layout::accumulator> c;
+    RT_C c;
 
     int global_block_id = blockIdx.x;
 
@@ -557,7 +574,50 @@ __global__ __launch_bounds__(256, 1) void matmul_device(const kittens::gl<fp8e4m
 
 
         // this is doing the kth mma
-        mma_ABt(c, a, b, c);
+        // mma_ABt(c, a, b, c);
+        {
+            // mma_ABt(c, a, b, c);
+            using D = RT_C;
+            D& d_mma = c;
+            const RT_A& a_mma = a;
+            const RT_B& b_mma = b;
+            const RT_C& c_mma = c;
+
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, c_mma, 0, 0, 0);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, d_mma, 0, 0, 1);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, c_mma, 0, 1, 0);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, d_mma, 0, 1, 1);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, c_mma, 0, 2, 0);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, d_mma, 0, 2, 1);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, c_mma, 0, 3, 0);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, d_mma, 0, 3, 1);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, c_mma, 1, 0, 0);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, d_mma, 1, 0, 1);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, c_mma, 1, 1, 0);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, d_mma, 1, 1, 1);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, c_mma, 1, 2, 0);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, d_mma, 1, 2, 1);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, c_mma, 1, 3, 0);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, d_mma, 1, 3, 1);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, c_mma, 2, 0, 0);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, d_mma, 2, 0, 1);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, c_mma, 2, 1, 0);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, d_mma, 2, 1, 1);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, c_mma, 2, 2, 0);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, d_mma, 2, 2, 1);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, c_mma, 2, 3, 0);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, d_mma, 2, 3, 1);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, c_mma, 3, 0, 0);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, d_mma, 3, 0, 1);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, c_mma, 3, 1, 0);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, d_mma, 3, 1, 1);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, c_mma, 3, 2, 0);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, d_mma, 3, 2, 1);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, c_mma, 3, 3, 0);
+            mma_ABt_base_wrapper(d_mma, a_mma, b_mma, d_mma, 3, 3, 1);
+        }
+
+
         auto bs_subtile_temp = kittens::subtile_inplace<BLOCK_SIZE_COL / WARPS_COL, k_step>(Bs[next], {warp_n, 0});
         load(b_temp, bs_subtile_temp);
 
