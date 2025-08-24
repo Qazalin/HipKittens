@@ -53,8 +53,8 @@ __device__ static inline void row_reduce(V &row_accum, const T &src, const V &sr
         RT accum_single = op::template op<RT>(accum_packed.x, accum_packed.y);
 
         if constexpr (std::is_same_v<RT, float>) {
-            uint2_t res = __builtin_amdgcn_permlane32_swap(__float_as_uint(accum_single), __float_as_uint(accum_single), false, true);
-            accum_single = op::template op<RT>(__uint_as_float(res.x), __uint_as_float(res.y));
+            float res = __shfl(accum_single, laneid() ^ 32);
+            accum_single = op::template op<RT>(accum_single, res);
         }
         else if constexpr (std::is_same_v<RT, bf16>) {
             uint2_t res = __builtin_amdgcn_permlane32_swap(__bfloat16_as_ushort(accum_single), __bfloat16_as_ushort(accum_single), false, true);
