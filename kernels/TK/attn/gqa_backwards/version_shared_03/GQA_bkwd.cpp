@@ -25,7 +25,7 @@ template<int D> struct attn_prep_globals {
     gl<float, -1, -1, -1, -1> delta;
     dim3 grid() { return dim3(ATTN_B, ATTN_H, ((ATTN_N / BLOCK_SIZE + NUM_WARPS_PREP - 1) / NUM_WARPS_PREP)); }
     dim3 block() { return dim3(NUM_THREADS_PREP); }
-    size_t dynamic_shared_memory() { return MAX_SHARED_MEMORY-32000; }
+    size_t dynamic_shared_memory() { return 1024; }
 };
 
 template<int D> __launch_bounds__(NUM_THREADS_PREP, 2)
@@ -81,14 +81,15 @@ __global__ void attend_bwd_combined_ker(const attn_bwd_combined_globals<D> g) {
 
     // Register tiles
     qkvo_tile<D, bf16, row_l> q_reg, k_reg, v_reg;
-    qkvo_tile<D, float, row_l> dOi_reg, Oi_reg;
+    qkvo_tile<D, float, row_l> dOi_reg;
     qkvo_tile<D, float, accum_col_l> dQ_acc, dK_acc, dV_acc;
 
     qkvo_tile<D, bf16, row_l> qj_reg, kj_reg, vj_reg;
-    qkvo_tile<D, float, row_l> dOj_reg, Oj_reg;
+    qkvo_tile<D, float, row_l> dOj_reg;
     qkvo_tile<D, bf16, col_l> kj_reg_col;
     qkvo_tile<D,bf16,col_l> q_bf16_col;
     qkvo_tile<D,bf16,col_l> dO_bf16_col;
+    qkvo_tile<D,bf16,row_l> dO_reg_bf16;
 
     typename attn_tile<D,float,accum_col_l>::col_vec mi_vec, li_vec;
     typename attn_tile<D,float,accum_col_l>::col_vec deltai_vec;
@@ -98,11 +99,8 @@ __global__ void attend_bwd_combined_ker(const attn_bwd_combined_globals<D> g) {
     attn_tile<D,float,accum_col_l> S; 
     attn_tile<D,float,accum_col_l> dOVt;
     attn_tile<D,float,row_l> dOVt_row;
-    qkvo_tile<D,bf16,row_l> dO_reg_bf16;
-    attn_tile<D,bf16,accum_col_l> P_bf16; 
     attn_tile<D,bf16,col_l> P_bf16_col;
-    attn_tile<D,bf16,accum_col_l> dS_bf16; 
-    attn_tile<D,bf16,col_l> dS_bf16_col;
+    attn_tile<D,bf16,accum_col_l> P_bf16;  
     
     // Initialize accumulators
     zero(dQ_acc);
@@ -114,7 +112,6 @@ __global__ void attend_bwd_combined_ker(const attn_bwd_combined_globals<D> g) {
     load(k_reg,  g.K,  {b,h,i,0});
     load(v_reg,  g.V,  {b,h,i,0});
     load(dOi_reg, g.dOg, {b,h,i,0});
-    load(Oi_reg,  g.O,  {b,h,i,0});
     
     // Load statistics for block i
     load(mi_vec, g.m_vec, {b,h,0,i});
@@ -193,7 +190,6 @@ __global__ void attend_bwd_combined_ker(const attn_bwd_combined_globals<D> g) {
 
         // Other loads
         load(dOj_reg, g.dOg,  {b,h,j,0});
-        load(Oj_reg,  g.O,    {b,h,j,0});
         load(mj_vec,  g.m_vec, {b,h,0,j});
         load(lj_vec,  g.l_vec, {b,h,0,j});
         load(deltaj_vec, g.delta_vec, {b,h,0,j});
@@ -222,10 +218,10 @@ __global__ void attend_bwd_combined_ker(const attn_bwd_combined_globals<D> g) {
         
         // dK_i += dS_ji^T Q_j * scale
         mul(dOVt, dOVt, scale_factor);
-        copy(dS_bf16, dOVt);
-        swap_layout(dS_bf16_col, dS_bf16);
+        copy(P_bf16, dOVt);
+        swap_layout(P_bf16_col, P_bf16);
         swap_layout(q_bf16_col, qj_reg);
-        mma_AtB(dK_acc, dS_bf16_col, q_bf16_col, dK_acc);
+        mma_AtB(dK_acc, P_bf16_col, q_bf16_col, dK_acc);
     }
 
     // ============ Compute dQ_i contribution from block j ============
@@ -264,7 +260,6 @@ __global__ void attend_bwd_combined_ker(const attn_bwd_combined_globals<D> g) {
     // Load Q_j, dO_j, O_j and their statistics
     load(qj_reg,  q_smem[tic]);
     load(dOj_reg, g.dOg,  {b,h,num_blocks-1,0});
-    load(Oj_reg,  g.O,    {b,h,num_blocks-1,0});
     load(mj_vec,  g.m_vec, {b,h,0,num_blocks-1});
     load(lj_vec,  g.l_vec, {b,h,0,num_blocks-1});
     load(deltaj_vec, g.delta_vec, {b,h,0,num_blocks-1});
@@ -293,10 +288,10 @@ __global__ void attend_bwd_combined_ker(const attn_bwd_combined_globals<D> g) {
     
     // dK_i += dS_ji^T Q_j * scale
     mul(dOVt, dOVt, scale_factor);
-    copy(dS_bf16, dOVt);
-    swap_layout(dS_bf16_col, dS_bf16);
+    copy(P_bf16, dOVt);
+    swap_layout(P_bf16_col, P_bf16);
     swap_layout(q_bf16_col, qj_reg);
-    mma_AtB(dK_acc, dS_bf16_col, q_bf16_col, dK_acc);
+    mma_AtB(dK_acc, P_bf16_col, q_bf16_col, dK_acc);
 
     // Store results for block i
     store(g.dQg, dQ_acc, {b,h,i,0});
