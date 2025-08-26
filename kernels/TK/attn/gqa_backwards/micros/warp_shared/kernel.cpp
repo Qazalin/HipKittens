@@ -4,7 +4,7 @@ using namespace kittens;
 
 constexpr int b = 1;
 constexpr int h = 1;
-constexpr int n = 32;
+constexpr int n = 128;
 constexpr int d = 32;
 
 constexpr int BLOCK_SIZE = 32;
