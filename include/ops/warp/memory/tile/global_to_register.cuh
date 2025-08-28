@@ -11,25 +11,6 @@
 
 namespace kittens {
 
-
-__device__ inline i32x4 make_srsrc(const void* ptr, uint32_t range_bytes, uint32_t row_stride_bytes = 0) {
-    std::uintptr_t as_int = reinterpret_cast<std::uintptr_t>(ptr);   // width = sizeof(void*)
-    std::uint64_t  as_u64 = static_cast<std::uint64_t>(as_int);    // widen if host is 32-bit
-    buffer_resource rsrc = make_buffer_resource(as_u64, range_bytes, 0x110000);
-
-    row_stride_bytes &= 0x3FFF;
-    if (row_stride_bytes) {
-        // - The swizzle stride lives in bits 13:0 of word2.
-        //   Max value = 0x3FFF (8 KiB – one cache line per bank).
-        uint64_t stride_field = row_stride_bytes;
-        stride_field = stride_field | 0x4000;         // Cache swizzle
-        stride_field = stride_field | 0x8000;         // Swizzle enable
-        rsrc.ptr |= stride_field << 48;
-    }
-
-    return *reinterpret_cast<const i32x4*>(&rsrc);
-}
-
 /**
  * @brief Load data from a source array into a row-major layout tile.
  *
@@ -50,7 +31,14 @@ __device__ inline static void load(RT &dst, const GL &src, const COORD &idx) {
     const int row_stride = src.template stride<axis>();
     int laneid = kittens::laneid();
 
-    int row_offset = laneid%32, col_offset = 8*(laneid/32);
+    int row_offset = laneid%(dst.tile_size_row), col_offset = dst.elements_per_base_tile*(laneid/dst.tile_size_row);
+
+    int condition = (threadIdx.x == 0 && blockIdx.x == 0 && blockIdx.y == 0);
+    if (condition) {
+        printf("dst.elements_per_base_tile: %d\n", dst.elements_per_base_tile);
+        printf("dst.packed_per_thread: %d\n", dst.packed_per_thread);
+        printf("dst.packed_per_tile: %d\n", dst.packed_per_tile);
+    }
     
 
     uint32_t buffer_size = src.batch() * src.depth() * src.rows() * src.cols() * sizeof(U);
@@ -59,46 +47,40 @@ __device__ inline static void load(RT &dst, const GL &src, const COORD &idx) {
     buffer_resource br = make_buffer_resource(as_u64, buffer_size, 0x00020000);
 
     #pragma unroll
-    for (int z = 0; z < REPEAT; z++) {
-
+    for(int i = 0; i < dst.height; i++) {
+        int row = dst.tile_size_row*i + row_offset;
         #pragma unroll
-        for(int i = 0; i < dst.height; i++) {
-            int row = dst.tile_size_row*i + row_offset;
-
+        for(int j = 0; j < dst.width; j++) {
+            int col = dst.tile_size_col*j + col_offset;
+            U2* tmp;
+            if constexpr (sizeof(U2) == 4) { // bf16_2
+                float4 loaded = std::bit_cast<float4>(llvm_amdgcn_raw_buffer_load_b128(
+                    std::bit_cast<i32x4>(br),
+                    (row*row_stride + col) * sizeof(U),
+                    0,
+                    0
+                ));
+                tmp = reinterpret_cast<U2*>(&loaded);
+            }
+            else { // float2
+                float4 loaded[2];
+                loaded[0] = std::bit_cast<float4>(llvm_amdgcn_raw_buffer_load_b128(
+                    std::bit_cast<i32x4>(br),
+                    (row*row_stride + col) * sizeof(U),
+                    0,
+                    0
+                ));
+                loaded[1] = std::bit_cast<float4>(llvm_amdgcn_raw_buffer_load_b128(
+                    std::bit_cast<i32x4>(br),
+                    (row*row_stride + col + 4) * sizeof(U),
+                    0,
+                    0
+                ));
+                tmp = reinterpret_cast<U2*>(loaded);
+            }
             #pragma unroll
-            for(int j = 0; j < dst.width; j++) {
-                int col = dst.tile_size_col*j + col_offset + z*16;
-
-                U2* tmp;
-                if constexpr (sizeof(U2) == 4) { // bf16_2
-                    float4 loaded = std::bit_cast<float4>(llvm_amdgcn_raw_buffer_load_b128(
-                        std::bit_cast<i32x4>(br),
-                        (row*row_stride + col) * sizeof(U),
-                        0,
-                        0
-                    ));
-                    tmp = reinterpret_cast<U2*>(&loaded);
-                }
-                else { // float2
-                    float4 loaded[2];
-                    loaded[0] = std::bit_cast<float4>(llvm_amdgcn_raw_buffer_load_b128(
-                        std::bit_cast<i32x4>(br),
-                        (row*row_stride + col) * sizeof(U),
-                        0,
-                        0
-                    ));
-                    loaded[1] = std::bit_cast<float4>(llvm_amdgcn_raw_buffer_load_b128(
-                        std::bit_cast<i32x4>(br),
-                        (row*row_stride + col + 4) * sizeof(U),
-                        0,
-                        0
-                    ));
-                    tmp = reinterpret_cast<U2*>(loaded);
-                }
-                #pragma unroll
-                for(int k = 0; k < 4; k++) {
-                    dst.tiles[i][j].data[k + z*4] = base_types::convertor<T2, U2>::convert(tmp[k]);
-                }
+            for(int k = 0; k < dst.packed_per_thread; k++) {
+                dst.tiles[i][j].data[k] = base_types::convertor<T2, U2>::convert(tmp[k]);
             }
         }
     }
@@ -249,7 +231,6 @@ __device__ inline static void load(RT &dst, const GL &src, const COORD &idx) {
     int laneid = kittens::laneid();
 
     int row_offset = laneid%32, col_offset = 4*(laneid/32);
-    
 
     uint32_t buffer_size = src.batch() * src.depth() * src.rows() * src.cols() * sizeof(U);
     std::uintptr_t as_int = reinterpret_cast<std::uintptr_t>(src_ptr);
@@ -352,30 +333,26 @@ __device__ inline static void store(const GL &dst, const RT &src, const COORD &i
     const int row_stride = dst.template stride<axis>();
     int laneid = kittens::laneid();
 
-    int row_offset = laneid%32, col_offset = 8*(laneid/32);
+    int row_offset = laneid%(src.tile_size_row), col_offset = src.elements_per_base_tile*(laneid/src.tile_size_row);
 
-    for (int z = 0; z < REPEAT; z++) {
-
+    #pragma unroll
+    for(int i = 0; i < src.height; i++) {
+        int row = src.tile_size_row*i + row_offset;
+        
         #pragma unroll
-        for(int i = 0; i < src.height; i++) {
-            int row = src.tile_size_row*i + row_offset;
-            
+        for(int j = 0; j < src.width; j++) {
+            int col = src.tile_size_col*j + col_offset;
+            U2 tmp[src.packed_per_thread];
             #pragma unroll
-            for(int j = 0; j < src.width; j++) {
-                int col = src.tile_size_col*j + col_offset + z*16;
-
-                U2 tmp[4];
-                #pragma unroll
-                for(int k = 0; k < 4; k++) {
-                    tmp[k] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[k + z*4]);
-                }
-                if constexpr (sizeof(U2) == 4) { // bf16_2
-                    *(bytes_16*)&dst_ptr[row*row_stride + col] = *(bytes_16*)tmp;
-                }
-                else { // float2
-                    *(bytes_16*)&dst_ptr[row*row_stride + col] = *(bytes_16*)tmp;
-                    *(bytes_16*)&dst_ptr[row*row_stride + col + 4] = *(bytes_16*)&tmp[2];
-                }
+            for(int k = 0; k < src.packed_per_thread; k++) {
+                tmp[k] = base_types::convertor<U2, T2>::convert(src.tiles[i][j].data[k]);
+            }
+            if constexpr (sizeof(U2) == 4) { // bf16_2
+                *(bytes_16*)&dst_ptr[row*row_stride + col] = *(bytes_16*)tmp;
+            }
+            else { // float2
+                *(bytes_16*)&dst_ptr[row*row_stride + col] = *(bytes_16*)tmp;
+                *(bytes_16*)&dst_ptr[row*row_stride + col + 4] = *(bytes_16*)&tmp[2];
             }
         }
     }

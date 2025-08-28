@@ -12,81 +12,64 @@ namespace kittens {
 
 
 #ifdef KITTENS_CDNA4
-#ifdef KITTENS_1632
-__device__ static inline void mfma161632(      float2 (&D)[4],
+__device__ static inline void mfma161632(      float2 (&D)[2],
                                          const half_2 (&A)[4],
                                          const half_2 (&B)[4],
-                                         const float2 (&C)[4]) {
+                                         const float2 (&C)[2]) {
     
-    typedef __attribute__((__vector_size__(8 * sizeof(__fp16)))) __fp16 fp16x4_t;
+    typedef __attribute__((__vector_size__(8 * sizeof(__fp16)))) __fp16 fp16x8_t;
     (*(float4*)D).data = {__builtin_amdgcn_mfma_f32_16x16x32_f16(
-        (*(fp16x4_t*)A),
-        (*(fp16x4_t*)B),
+        (*(fp16x8_t*)A),
+        (*(fp16x8_t*)B),
         (*(float4*)C).data,
         0, 0, 0
     )};
 }
 
-__device__ static inline void mfma161632(      float2 (&D)[4],
+__device__ static inline void mfma161632(      float2 (&D)[2],
                                          const bf16_2 (&A)[4],
                                          const bf16_2 (&B)[4],
-                                         const float2 (&C)[4]) {
+                                         const float2 (&C)[2]) {
 
-    typedef __attribute__((__vector_size__(8 * sizeof(__bf16)))) __bf16 bf16x4_t;
+    typedef __attribute__((__vector_size__(8 * sizeof(__bf16)))) __bf16 bf16x8_t;
     (*(float4*)D).data = {__builtin_amdgcn_mfma_f32_16x16x32_bf16(
-        (*(bf16x4_t*)A),
-        (*(bf16x4_t*)B),
+        (*(bf16x8_t*)A),
+        (*(bf16x8_t*)B),
         (*(float4*)C).data,
         0, 0, 0
     )};
 }
-#else
 __device__ static inline void mfma323216(      float2 (&D)[8],
-                                         const bf16_2 (&A)[8],
-                                         const bf16_2 (&B)[8],
+                                         const bf16_2 (&A)[4],
+                                         const bf16_2 (&B)[4],
                                          const float2 (&C)[8]) {
     // Cast to the correct vector types that the intrinsic expects
     typedef __attribute__((__vector_size__(8 * sizeof(__bf16)))) __bf16 bf16x8_t;
     typedef __attribute__((__vector_size__(16 * sizeof(float)))) float floatx16_t;
-    
-    *(floatx16_t*)C = __builtin_amdgcn_mfma_f32_32x32x16_bf16(
-        *(bf16x8_t*)A,
-        *(bf16x8_t*)B,
-        *(floatx16_t*)C,
-        0, 0, 0
-    );
 
     *(floatx16_t*)D = __builtin_amdgcn_mfma_f32_32x32x16_bf16(
-        *(bf16x8_t*)(A + 4),
-        *(bf16x8_t*)(B + 4),
+        *(bf16x8_t*)(A),
+        *(bf16x8_t*)(B),
         *(floatx16_t*)C,
         0, 0, 0
     );
 }
 
 __device__ static inline void mfma323216(      float2 (&D)[8],
-                                         const half_2 (&A)[8],
-                                         const half_2 (&B)[8],
+                                         const half_2 (&A)[4],
+                                         const half_2 (&B)[4],
                                          const float2 (&C)[8]) {
     // Cast to the correct vector types that the intrinsic expects
     typedef __attribute__((__vector_size__(8 * sizeof(__fp16)))) __fp16 fp16x8_t;
     typedef __attribute__((__vector_size__(16 * sizeof(float)))) float floatx16_t;
     
-    *(floatx16_t*)C = __builtin_amdgcn_mfma_f32_32x32x16_f16(
-        *(fp16x8_t*)A,
-        *(fp16x8_t*)B,
-        *(floatx16_t*)C,
-        0, 0, 0
-    );
-
     *(floatx16_t*)D = __builtin_amdgcn_mfma_f32_32x32x16_f16(
-        *(fp16x8_t*)(A + 4),
-        *(fp16x8_t*)(B + 4),
+        *(fp16x8_t*)(A),
+        *(fp16x8_t*)(B),
         *(floatx16_t*)C,
         0, 0, 0
     );
 }
-#endif
 #else
 __device__ static inline void mfma161616(      float2 (&D)[2],
                                          const half_2 (&A)[2],
@@ -126,45 +109,42 @@ __device__ static inline void mfma161616(      float2 (&D)[2],
  * @param[in] c The input rt_base<float2, row_layout> accumulator matrix.
  */
 #ifdef KITTENS_CDNA4
-#ifdef KITTENS_1632
-__device__ static inline void mma_AB_base(rt_base<float, ducks::rt_layout::accumulator_col> &d,
-    const rt_base<half, ducks::rt_layout::row> &a,
-    const rt_base<half, ducks::rt_layout::col> &b, // in col-major mode
-    const rt_base<float, ducks::rt_layout::accumulator_col> &c) {
+__device__ static inline void mma_AB_base(rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_16x16x32> &d,
+                                    const rt_base<half, ducks::rt_layout::row, ducks::rt_matrix::mfma_16x16x32> &a,
+                                    const rt_base<half, ducks::rt_layout::col, ducks::rt_matrix::mfma_16x16x32> &b, // in col-major mode
+                                    const rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_16x16x32> &c) {
     mfma161632(d.data, a.data, b.data, c.data);
 }
-__device__ static inline void mma_AB_base(rt_base<float, ducks::rt_layout::accumulator_col> &d,
-    const rt_base<bf16, ducks::rt_layout::row> &a,
-    const rt_base<bf16, ducks::rt_layout::col> &b, // in col-major mode
-    const rt_base<float, ducks::rt_layout::accumulator_col> &c) {
+__device__ static inline void mma_AB_base(rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_16x16x32> &d,
+                                        const rt_base<bf16, ducks::rt_layout::row, ducks::rt_matrix::mfma_16x16x32> &a,
+                                        const rt_base<bf16, ducks::rt_layout::col, ducks::rt_matrix::mfma_16x16x32> &b, // in col-major mode
+                                        const rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_16x16x32> &c) {
     mfma161632(d.data, a.data, b.data, c.data);
 }
-#else
-__device__ static inline void mma_AB_base(rt_base<float, ducks::rt_layout::accumulator_col> &d,
-                                     const rt_base<half, ducks::rt_layout::row> &a,
-                                     const rt_base<half, ducks::rt_layout::col> &b, // in col-major mode
-                                     const rt_base<float, ducks::rt_layout::accumulator_col> &c) {
+__device__ static inline void mma_AB_base(rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &d,
+                                     const rt_base<half, ducks::rt_layout::row, ducks::rt_matrix::mfma_32x32x16> &a,
+                                     const rt_base<half, ducks::rt_layout::col, ducks::rt_matrix::mfma_32x32x16> &b, // in col-major mode
+                                     const rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &c) {
     mfma323216(d.data, a.data, b.data, c.data);
 }
-__device__ static inline void mma_AB_base(rt_base<float, ducks::rt_layout::accumulator_col> &d,
-                                     const rt_base<bf16, ducks::rt_layout::row> &a,
-                                     const rt_base<bf16, ducks::rt_layout::col> &b, // in col-major mode
-                                     const rt_base<float, ducks::rt_layout::accumulator_col> &c) {
+__device__ static inline void mma_AB_base(rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &d,
+                                     const rt_base<bf16, ducks::rt_layout::row, ducks::rt_matrix::mfma_32x32x16> &a,
+                                     const rt_base<bf16, ducks::rt_layout::col, ducks::rt_matrix::mfma_32x32x16> &b, // in col-major mode
+                                     const rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &c) {
     mfma323216(d.data, a.data, b.data, c.data);
 }
-__device__ static inline void mma_AB_base(rt_base<float, ducks::rt_layout::accumulator_col> &d,
-                                     const rt_base<half, ducks::rt_layout::accumulator_row> &a,
-                                     const rt_base<half, ducks::rt_layout::accumulator_col> &b, // in col-major mode
-                                     const rt_base<float, ducks::rt_layout::accumulator_col> &c) {
-    mfma323216(d.data, a.data, b.data, c.data);
-}
-__device__ static inline void mma_AB_base(rt_base<float, ducks::rt_layout::accumulator_col> &d,
-                                     const rt_base<bf16, ducks::rt_layout::accumulator_row> &a,
-                                     const rt_base<bf16, ducks::rt_layout::accumulator_col> &b, // in col-major mode
-                                     const rt_base<float, ducks::rt_layout::accumulator_col> &c) {
-    mfma323216(d.data, a.data, b.data, c.data);
-}
-#endif
+// __device__ static inline void mma_AB_base(rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &d,
+//                                      const rt_base<half, ducks::rt_layout::accumulator_row, ducks::rt_matrix::mfma_32x32x16> &a,
+//                                      const rt_base<half, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &b, // in col-major mode
+//                                      const rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &c) {
+//     mfma323216(d.data, a.data, b.data, c.data);
+// }
+// __device__ static inline void mma_AB_base(rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &d,
+//                                      const rt_base<bf16, ducks::rt_layout::accumulator_row, ducks::rt_matrix::mfma_32x32x16> &a,
+//                                      const rt_base<bf16, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &b, // in col-major mode
+//                                      const rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &c) {
+//     mfma323216(d.data, a.data, b.data, c.data);
+// }
 #else
 __device__ static inline void mma_AB_base(rt_base<float, ducks::rt_layout::col> &d,
                                     const rt_base<half, ducks::rt_layout::row> &a,
@@ -191,45 +171,42 @@ __device__ static inline void mma_AB_base(rt_base<float, ducks::rt_layout::col> 
  * @param[in] c The input rt_base<float2, row_layout> accumulator matrix.
  */
 #ifdef KITTENS_CDNA4
-#ifdef KITTENS_1632
-__device__ static inline void mma_ABt_base(rt_base<float, ducks::rt_layout::accumulator_col> &d,
-    const rt_base<half, ducks::rt_layout::row> &a,
-    const rt_base<half, ducks::rt_layout::row> &b, // in row-major mode
-    const rt_base<float, ducks::rt_layout::accumulator_col> &c) {
+__device__ static inline void mma_ABt_base(rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_16x16x32> &d,
+    const rt_base<half, ducks::rt_layout::row, ducks::rt_matrix::mfma_16x16x32> &a,
+    const rt_base<half, ducks::rt_layout::row, ducks::rt_matrix::mfma_16x16x32> &b, // in row-major mode
+    const rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_16x16x32> &c) {
     mfma161632(d.data, a.data, b.data, c.data);
 }
-__device__ static inline void mma_ABt_base(rt_base<float, ducks::rt_layout::accumulator_col> &d,
-    const rt_base<bf16, ducks::rt_layout::row> &a,
-    const rt_base<bf16, ducks::rt_layout::row> &b, // in row-major mode
-    const rt_base<float, ducks::rt_layout::accumulator_col> &c) {
+__device__ static inline void mma_ABt_base(rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_16x16x32> &d,
+    const rt_base<bf16, ducks::rt_layout::row, ducks::rt_matrix::mfma_16x16x32> &a,
+    const rt_base<bf16, ducks::rt_layout::row, ducks::rt_matrix::mfma_16x16x32> &b, // in row-major mode
+    const rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_16x16x32> &c) {
     mfma161632(d.data, a.data, b.data, c.data);
 }
-#else
-__device__ static inline void mma_ABt_base(rt_base<float, ducks::rt_layout::accumulator_col> &d,
-                                     const rt_base<half, ducks::rt_layout::row> &a,
-                                     const rt_base<half, ducks::rt_layout::row> &b, // in row-major mode
-                                     const rt_base<float, ducks::rt_layout::accumulator_col> &c) {
+__device__ static inline void mma_ABt_base(rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &d,
+                                     const rt_base<half, ducks::rt_layout::row, ducks::rt_matrix::mfma_32x32x16> &a,
+                                     const rt_base<half, ducks::rt_layout::row, ducks::rt_matrix::mfma_32x32x16> &b, // in row-major mode
+                                     const rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &c) {
     mfma323216(d.data, a.data, b.data, c.data);
 }
-__device__ static inline void mma_ABt_base(rt_base<float, ducks::rt_layout::accumulator_col> &d,
-                                     const rt_base<bf16, ducks::rt_layout::row> &a,
-                                     const rt_base<bf16, ducks::rt_layout::row> &b, // in row-major mode
-                                     const rt_base<float, ducks::rt_layout::accumulator_col> &c) {
+__device__ static inline void mma_ABt_base(rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &d,
+                                     const rt_base<bf16, ducks::rt_layout::row, ducks::rt_matrix::mfma_32x32x16> &a,
+                                     const rt_base<bf16, ducks::rt_layout::row, ducks::rt_matrix::mfma_32x32x16> &b, // in row-major mode
+                                     const rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &c) {
     mfma323216(d.data, a.data, b.data, c.data);
 }
-__device__ static inline void mma_ABt_base(rt_base<float, ducks::rt_layout::accumulator_col> &d,
-                                     const rt_base<half, ducks::rt_layout::accumulator_row> &a,
-                                     const rt_base<half, ducks::rt_layout::accumulator_row> &b, // in row-major mode
-                                     const rt_base<float, ducks::rt_layout::accumulator_col> &c) {
-    mfma323216(d.data, a.data, b.data, c.data);
-}
-__device__ static inline void mma_ABt_base(rt_base<float, ducks::rt_layout::accumulator_col> &d,
-                                     const rt_base<bf16, ducks::rt_layout::accumulator_row> &a,
-                                     const rt_base<bf16, ducks::rt_layout::accumulator_row> &b, // in row-major mode
-                                     const rt_base<float, ducks::rt_layout::accumulator_col> &c) {
-    mfma323216(d.data, a.data, b.data, c.data);
-}
-#endif
+// __device__ static inline void mma_ABt_base(rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &d,
+//                                      const rt_base<half, ducks::rt_layout::accumulator_row, ducks::rt_matrix::mfma_32x32x16> &a,
+//                                      const rt_base<half, ducks::rt_layout::accumulator_row, ducks::rt_matrix::mfma_32x32x16> &b, // in row-major mode
+//                                      const rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &c) {
+//     mfma323216(d.data, a.data, b.data, c.data);
+// }
+// __device__ static inline void mma_ABt_base(rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &d,
+//                                      const rt_base<bf16, ducks::rt_layout::accumulator_row, ducks::rt_matrix::mfma_32x32x16> &a,
+//                                      const rt_base<bf16, ducks::rt_layout::accumulator_row, ducks::rt_matrix::mfma_32x32x16> &b, // in row-major mode
+//                                      const rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &c) {
+//     mfma323216(d.data, a.data, b.data, c.data);
+// }
 #else
 __device__ static inline void mma_ABt_base(rt_base<float, ducks::rt_layout::col> &d,
                                      const rt_base<half, ducks::rt_layout::row> &a,
@@ -256,57 +233,42 @@ __device__ static inline void mma_ABt_base(rt_base<float, ducks::rt_layout::col>
  * @param[in] c The input rt_base<float2, row_layout> accumulator matrix.
  */
 #ifdef KITTENS_CDNA4
-#ifdef KITTENS_1632
-__device__ static inline void mma_AtB_base(rt_base<float, ducks::rt_layout::accumulator_col> &d,
-                                           const rt_base<half, ducks::rt_layout::col> &a,
-                                           const rt_base<half, ducks::rt_layout::col> &b, // in col-major mode
-                                           const rt_base<float, ducks::rt_layout::accumulator_col> &c) {
+__device__ static inline void mma_AtB_base(rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_16x16x32> &d,
+                                           const rt_base<half, ducks::rt_layout::col, ducks::rt_matrix::mfma_16x16x32> &a,
+                                           const rt_base<half, ducks::rt_layout::col, ducks::rt_matrix::mfma_16x16x32> &b, // in col-major mode
+                                           const rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_16x16x32> &c) {
     mfma161632(d.data, a.data, b.data, c.data);
 }
-__device__ static inline void mma_AtB_base(rt_base<float, ducks::rt_layout::accumulator_col> &d,
-                                           const rt_base<bf16, ducks::rt_layout::col> &a,
-                                           const rt_base<bf16, ducks::rt_layout::col> &b, // in col-major mode
-                                           const rt_base<float, ducks::rt_layout::accumulator_col> &c) {
+__device__ static inline void mma_AtB_base(rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_16x16x32> &d,
+                                           const rt_base<bf16, ducks::rt_layout::col, ducks::rt_matrix::mfma_16x16x32> &a,
+                                           const rt_base<bf16, ducks::rt_layout::col, ducks::rt_matrix::mfma_16x16x32> &b, // in col-major mode
+                                           const rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_16x16x32> &c) {
     mfma161632(d.data, a.data, b.data, c.data);
 }
-__device__ static inline void mma_AtB_base(rt_base<float, ducks::rt_layout::accumulator_col> &d,
-                                           const rt_base<half, ducks::rt_layout::accumulator_col> &a,
-                                           const rt_base<half, ducks::rt_layout::accumulator_col> &b, // in col-major mode
-                                           const rt_base<float, ducks::rt_layout::accumulator_col> &c) {
-    mfma161632(d.data, a.data, b.data, c.data);
-}
-__device__ static inline void mma_AtB_base(rt_base<float, ducks::rt_layout::accumulator_col> &d,
-                                           const rt_base<bf16, ducks::rt_layout::accumulator_col> &a,
-                                           const rt_base<bf16, ducks::rt_layout::accumulator_col> &b, // in col-major mode
-                                           const rt_base<float, ducks::rt_layout::accumulator_col> &c) {
-    mfma161632(d.data, a.data, b.data, c.data);
-}
-#else
-__device__ static inline void mma_AtB_base(rt_base<float, ducks::rt_layout::accumulator_col> &d,
-                                        const rt_base<half, ducks::rt_layout::col> &a,
-                                        const rt_base<half, ducks::rt_layout::col> &b, // in col-major mode
-                                        const rt_base<float, ducks::rt_layout::accumulator_col> &c) {
+__device__ static inline void mma_AtB_base(rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &d,
+                                        const rt_base<half, ducks::rt_layout::col, ducks::rt_matrix::mfma_32x32x16> &a,
+                                        const rt_base<half, ducks::rt_layout::col, ducks::rt_matrix::mfma_32x32x16> &b, // in col-major mode
+                                        const rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &c) {
     mfma323216(d.data, a.data, b.data, c.data);
 }
-__device__ static inline void mma_AtB_base(rt_base<float, ducks::rt_layout::accumulator_col> &d,
-                                        const rt_base<bf16, ducks::rt_layout::col> &a,
-                                        const rt_base<bf16, ducks::rt_layout::col> &b, // in col-major mode
-                                        const rt_base<float, ducks::rt_layout::accumulator_col> &c) {
+__device__ static inline void mma_AtB_base(rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &d,
+                                        const rt_base<bf16, ducks::rt_layout::col, ducks::rt_matrix::mfma_32x32x16> &a,
+                                        const rt_base<bf16, ducks::rt_layout::col, ducks::rt_matrix::mfma_32x32x16> &b, // in col-major mode
+                                        const rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &c) {
     mfma323216(d.data, a.data, b.data, c.data);
 }
-__device__ static inline void mma_AtB_base(rt_base<float, ducks::rt_layout::accumulator_col> &d,
-                                        const rt_base<half, ducks::rt_layout::accumulator_col> &a,
-                                        const rt_base<half, ducks::rt_layout::accumulator_col> &b, // in col-major mode
-                                        const rt_base<float, ducks::rt_layout::accumulator_col> &c) {
-    mfma323216(d.data, a.data, b.data, c.data);
-}
-__device__ static inline void mma_AtB_base(rt_base<float, ducks::rt_layout::accumulator_col> &d,
-                                        const rt_base<bf16, ducks::rt_layout::accumulator_col> &a,
-                                        const rt_base<bf16, ducks::rt_layout::accumulator_col> &b, // in col-major mode
-                                        const rt_base<float, ducks::rt_layout::accumulator_col> &c) {
-    mfma323216(d.data, a.data, b.data, c.data);
-}
-#endif
+// __device__ static inline void mma_AtB_base(rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &d,
+//                                         const rt_base<half, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &a,
+//                                         const rt_base<half, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &b, // in col-major mode
+//                                         const rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &c) {
+//     mfma323216(d.data, a.data, b.data, c.data);
+// }
+// __device__ static inline void mma_AtB_base(rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &d,
+//                                         const rt_base<bf16, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &a,
+//                                         const rt_base<bf16, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &b, // in col-major mode
+//                                         const rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &c) {
+//     mfma323216(d.data, a.data, b.data, c.data);
+// }
 #else
 __device__ static inline void mma_AtB_base(rt_base<float, ducks::rt_layout::col> &d,
                                      const rt_base<half, ducks::rt_layout::col> &a,
@@ -333,57 +295,42 @@ __device__ static inline void mma_AtB_base(rt_base<float, ducks::rt_layout::col>
  * @param[in] c The input rt_base<float2, row_layout> accumulator matrix.
  */
 #ifdef KITTENS_CDNA4
-#ifdef KITTENS_1632
-__device__ static inline void mma_AtBt_base(rt_base<float, ducks::rt_layout::accumulator_col> &d,
-                                            const rt_base<half, ducks::rt_layout::col> &a,
-                                            const rt_base<half, ducks::rt_layout::row> &b, // in col-major mode
-                                            const rt_base<float, ducks::rt_layout::accumulator_col> &c) {
+__device__ static inline void mma_AtBt_base(rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_16x16x32> &d,
+                                            const rt_base<half, ducks::rt_layout::col, ducks::rt_matrix::mfma_16x16x32> &a,
+                                            const rt_base<half, ducks::rt_layout::row, ducks::rt_matrix::mfma_16x16x32> &b, // in col-major mode
+                                            const rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_16x16x32> &c) {
     mfma161632(d.data, a.data, b.data, c.data);
 }
-__device__ static inline void mma_AtBt_base(rt_base<float, ducks::rt_layout::accumulator_col> &d,
-                                            const rt_base<bf16, ducks::rt_layout::col> &a,
-                                            const rt_base<bf16, ducks::rt_layout::row> &b, // in col-major mode
-                                            const rt_base<float, ducks::rt_layout::accumulator_col> &c) {
+__device__ static inline void mma_AtBt_base(rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_16x16x32> &d,
+                                            const rt_base<bf16, ducks::rt_layout::col, ducks::rt_matrix::mfma_16x16x32> &a,
+                                            const rt_base<bf16, ducks::rt_layout::row, ducks::rt_matrix::mfma_16x16x32> &b, // in col-major mode
+                                            const rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_16x16x32> &c) {
     mfma161632(d.data, a.data, b.data, c.data);
 }
-__device__ static inline void mma_AtBt_base(rt_base<float, ducks::rt_layout::accumulator_col> &d,
-                                        const rt_base<half, ducks::rt_layout::accumulator_col> &a,
-                                        const rt_base<half, ducks::rt_layout::accumulator_row> &b, // in col-major mode
-                                        const rt_base<float, ducks::rt_layout::accumulator_col> &c) {
-    mfma161632(d.data, a.data, b.data, c.data);
-}
-__device__ static inline void mma_AtBt_base(rt_base<float, ducks::rt_layout::accumulator_col> &d,
-                                        const rt_base<bf16, ducks::rt_layout::accumulator_col> &a,
-                                        const rt_base<bf16, ducks::rt_layout::accumulator_row> &b, // in col-major mode
-                                        const rt_base<float, ducks::rt_layout::accumulator_col> &c) {
-    mfma161632(d.data, a.data, b.data, c.data);
-}
-#else
-__device__ static inline void mma_AtBt_base(rt_base<float, ducks::rt_layout::accumulator_col> &d,
-                                        const rt_base<half, ducks::rt_layout::col> &a,
-                                        const rt_base<half, ducks::rt_layout::row> &b, // in col-major mode
-                                        const rt_base<float, ducks::rt_layout::accumulator_col> &c) {
+__device__ static inline void mma_AtBt_base(rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &d,
+                                        const rt_base<half, ducks::rt_layout::col, ducks::rt_matrix::mfma_32x32x16> &a,
+                                        const rt_base<half, ducks::rt_layout::row, ducks::rt_matrix::mfma_32x32x16> &b, // in col-major mode
+                                        const rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &c) {
     mfma323216(d.data, a.data, b.data, c.data);
 }
-__device__ static inline void mma_AtBt_base(rt_base<float, ducks::rt_layout::accumulator_col> &d,
-                                        const rt_base<bf16, ducks::rt_layout::col> &a,
-                                        const rt_base<bf16, ducks::rt_layout::row> &b, // in col-major mode
-                                        const rt_base<float, ducks::rt_layout::accumulator_col> &c) {
+__device__ static inline void mma_AtBt_base(rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &d,
+                                        const rt_base<bf16, ducks::rt_layout::col, ducks::rt_matrix::mfma_32x32x16> &a,
+                                        const rt_base<bf16, ducks::rt_layout::row, ducks::rt_matrix::mfma_32x32x16> &b, // in col-major mode
+                                        const rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &c) {
     mfma323216(d.data, a.data, b.data, c.data);
 }
-__device__ static inline void mma_AtBt_base(rt_base<float, ducks::rt_layout::accumulator_col> &d,
-                                        const rt_base<half, ducks::rt_layout::accumulator_col> &a,
-                                        const rt_base<half, ducks::rt_layout::accumulator_row> &b, // in col-major mode
-                                        const rt_base<float, ducks::rt_layout::accumulator_col> &c) {
-    mfma323216(d.data, a.data, b.data, c.data);
-}
-__device__ static inline void mma_AtBt_base(rt_base<float, ducks::rt_layout::accumulator_col> &d,
-                                        const rt_base<bf16, ducks::rt_layout::accumulator_col> &a,
-                                        const rt_base<bf16, ducks::rt_layout::accumulator_row> &b, // in col-major mode
-                                        const rt_base<float, ducks::rt_layout::accumulator_col> &c) {
-    mfma323216(d.data, a.data, b.data, c.data);
-}
-#endif
+// __device__ static inline void mma_AtBt_base(rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &d,
+//                                         const rt_base<half, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &a,
+//                                         const rt_base<half, ducks::rt_layout::accumulator_row, ducks::rt_matrix::mfma_32x32x16> &b, // in col-major mode
+//                                         const rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &c) {
+//     mfma323216(d.data, a.data, b.data, c.data);
+// }
+// __device__ static inline void mma_AtBt_base(rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &d,
+//                                         const rt_base<bf16, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &a,
+//                                         const rt_base<bf16, ducks::rt_layout::accumulator_row, ducks::rt_matrix::mfma_32x32x16> &b, // in col-major mode
+//                                         const rt_base<float, ducks::rt_layout::accumulator_col, ducks::rt_matrix::mfma_32x32x16> &c) {
+//     mfma323216(d.data, a.data, b.data, c.data);
+// }
 #else
 __device__ static inline void mma_AtBt_base(rt_base<float, ducks::rt_layout::col> &d,
                                       const rt_base<half, ducks::rt_layout::col> &a,
@@ -478,6 +425,7 @@ __device__ static inline void mma_ABt(D &d,
                                 const A &a,
                                 const B &b, // notice row and (M, K) instead of col and (K, M)
                                 const C &c) {
+
     static_assert(D::rows == A::rows && D::cols == B::rows); // Check D matches A, B
     static_assert(A::cols == B::cols); // Check reduction dim is same
     static_assert(D::rows == C::rows && D::cols == C::cols); // Check D matches C

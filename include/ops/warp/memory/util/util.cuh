@@ -74,6 +74,24 @@ struct buffer_resource {
 __device__ inline buffer_resource make_buffer_resource(uint64_t ptr, uint32_t range, uint32_t config) {
     return {ptr, range, config};
 }
+__device__ inline i32x4 make_srsrc(const void* ptr, uint32_t range_bytes, uint32_t row_stride_bytes = 0) {
+    std::uintptr_t as_int = reinterpret_cast<std::uintptr_t>(ptr);   // width = sizeof(void*)
+    std::uint64_t  as_u64 = static_cast<std::uint64_t>(as_int);    // widen if host is 32-bit
+    buffer_resource rsrc = make_buffer_resource(as_u64, range_bytes, 0x110000);
+
+    row_stride_bytes &= 0x3FFF;
+    if (row_stride_bytes) {
+        // - The swizzle stride lives in bits 13:0 of word2.
+        //   Max value = 0x3FFF (8 KiB – one cache line per bank).
+        uint64_t stride_field = row_stride_bytes;
+        stride_field = stride_field | 0x4000;         // Cache swizzle
+        stride_field = stride_field | 0x8000;         // Swizzle enable
+        rsrc.ptr |= stride_field << 48;
+    }
+
+    return *reinterpret_cast<const i32x4*>(&rsrc);
+}
+
 __device__ uint64_t llvm_amdgcn_raw_buffer_load_b64(i32x4 srsrc, uint32_t voffset, uint32_t soffset, uint32_t coherency)
     __asm("llvm.amdgcn.raw.buffer.load.i64");
 

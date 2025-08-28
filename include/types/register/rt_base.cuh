@@ -43,9 +43,10 @@ struct identifier {};
  * 
  * In general, you probably want a row-major tile, unless you specifically want to call mma
  */
-template<typename _T, ducks::rt_layout::all _layout> struct rt_base {
+template<typename _T, ducks::rt_layout::all _layout, ducks::rt_matrix::all _matrix_layout> struct rt_base {
     using identifier = ducks::rt_base::identifier; ///< Type identifier for the rt_base structure.
     using layout = _layout; ///< Layout of the matrix tile.
+    using matrix_layout = _matrix_layout; ///< Layout of the matrix tile.
     static_assert(kittens::ducks::base_types::T1<_T>); // confirm it's a supported type
     using T = kittens::base_types::packing<_T>::unpacked_type;
     using T2 = kittens::base_types::packing<_T>::packed_type;
@@ -56,8 +57,18 @@ template<typename _T, ducks::rt_layout::all _layout> struct rt_base {
         "rt_base was provided an unsupported type."
     );
 
-    static constexpr int tile_size_row        = kittens::TILE_ROW_DIM<T>; // < Tile size is a constant 16 for everyone
-    static constexpr int tile_size_col        = kittens::TILE_COL_DIM<T>;
+    static constexpr int tile_size_row = (
+        std::is_same_v<layout, ducks::rt_layout::row> ? matrix_layout::tile_size_row_in : 
+        std::is_same_v<layout, ducks::rt_layout::col> ? matrix_layout::tile_size_col_in : 
+        std::is_same_v<layout, ducks::rt_layout::accumulator_row> ? matrix_layout::tile_size_row_out :  
+        matrix_layout::tile_size_col_out);
+
+    static constexpr int tile_size_col = (
+        std::is_same_v<layout, ducks::rt_layout::row> ? matrix_layout::tile_size_col_in : 
+        std::is_same_v<layout, ducks::rt_layout::col> ? matrix_layout::tile_size_row_in : 
+        std::is_same_v<layout, ducks::rt_layout::accumulator_row> ? matrix_layout::tile_size_col_out :  
+        matrix_layout::tile_size_row_out);
+
     static constexpr int rows                 = tile_size_row; ///< Number of rows.
     static constexpr int cols                 = tile_size_col; ///< Number of cols.
     static constexpr int num_elements         = rows*cols; // 1024
@@ -77,6 +88,7 @@ template<typename _T, ducks::rt_layout::all _layout> struct rt_base {
     using row_vec_layout = std::conditional_t<std::is_same_v<layout, ducks::rt_layout::row>, ducks::rv_layout::align, ducks::rv_layout::ortho>; // for holding column reductions
     using col_vec_layout = std::conditional_t<std::is_same_v<layout, ducks::rt_layout::row>, ducks::rv_layout::ortho, ducks::rv_layout::align>; // for holding row reductions
     #endif
+    
 
     dtype data[packed_per_thread]; ///< The actual storage for the base tile
 };
@@ -104,7 +116,7 @@ template<typename T> concept all = requires {
 
 /* ----------  WRAPPERS FOR PRETTINESS  ---------- */
 
-template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_fl = rt_base<float, L>;
-template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_bf = rt_base<bf16, L>;
-template<ducks::rt_layout::all L=ducks::rt_layout::row> using rt_base_hf = rt_base<half, L>;
+template<ducks::rt_layout::all L=ducks::rt_layout::row, ducks::rt_matrix::all M=ducks::rt_matrix::mfma_32x32x16> using rt_base_fl = rt_base<float, L, M>;
+template<ducks::rt_layout::all L=ducks::rt_layout::row, ducks::rt_matrix::all M=ducks::rt_matrix::mfma_32x32x16> using rt_base_bf = rt_base<bf16, L, M>;
+template<ducks::rt_layout::all L=ducks::rt_layout::row, ducks::rt_matrix::all M=ducks::rt_matrix::mfma_32x32x16> using rt_base_hf = rt_base<half, L, M>;
 }
