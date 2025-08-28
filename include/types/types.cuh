@@ -65,4 +65,11 @@ using naive_l = ducks::rv_layout::naive;
 using accum_align_l = ducks::rv_layout::accum_align;
 #endif
 
+
+// register matrix layouts
+#ifdef KITTENS_CDNA4
+using mfma_16x16x32 = ducks::rt_matrix::mfma_16x16x32;
+using mfma_32x32x16 = ducks::rt_matrix::mfma_32x32x16;
+#endif
+
 }
