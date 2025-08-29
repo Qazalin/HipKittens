@@ -66,7 +66,7 @@ __device__ inline void load(ST& dst, const GL& src, const COORD& idx)
 
             const int lane_col_byte_offset = (laneid % 4) * bytes_per_thread;
             const int lane_row_offset = ((laneid % kittens::WARP_THREADS) / 4);
-            const int swizzle = ((lane_row_offset * ST::underlying_tile_cols * sizeof(T)) >> 8) << 4;
+            const int swizzle = ((lane_row_offset * ST::underlying_tile_cols * sizeof(T)) >> 9) << 5;
 
             const int swizzled_lane_col_byte_offset = lane_col_byte_offset ^ swizzle;
             offset_in_global = ((warp_row_offset + lane_row_offset) * row_stride + warp_col_offset) * sizeof(T) + swizzled_lane_col_byte_offset;
