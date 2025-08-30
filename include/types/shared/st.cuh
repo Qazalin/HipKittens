@@ -37,8 +37,7 @@ struct identifier {};
 template<
     typename ST,
     int _subtile_height,
-    int _subtile_width,
-    ducks::st_matrix::all _matrix=ducks::st_matrix::mfma_32x32x16
+    int _subtile_width
 >
 struct st_subtile;
 
@@ -83,7 +82,7 @@ struct KITTENS_DEFAULT_ALIGN st {
     using col_vec = sv<dtype, rows>; ///< Column vector type for this tile
     using row_vec = sv<dtype, cols>; ///< Row vector type for this tile
     template<int subtile_rows, int subtile_cols> using subtile = st_subtile<
-        st<T, rows, cols, _matrix>, subtile_rows, subtile_cols, _matrix
+        st<T, rows, cols, _matrix>, subtile_rows, subtile_cols
     >; ///< A templated subtile type wrapper for this tile.
 };
 
@@ -101,16 +100,15 @@ struct KITTENS_DEFAULT_ALIGN st {
 template<
     typename _ST,
     int _subtile_rows,
-    int _subtile_cols,
-    ducks::st_matrix::all _matrix
+    int _subtile_cols
 >
 struct st_subtile {
     using identifier = ducks::st::identifier; // i quack like an st, gcc will never know the difference
-    using matrix_layout = _matrix; ///< Layout of the matrix tile.
     using ST = _ST;
     using T = ST::T;
     using T2 = ST::T2;
     using dtype = T; ///< Data type of the elements in the tile.
+    using matrix_layout = ST::matrix_layout; ///< Layout of the matrix tile.
 
     static constexpr int underlying_tile_rows     = ST::underlying_tile_rows;
     static constexpr int underlying_tile_cols     = ST::underlying_tile_cols;
@@ -136,7 +134,7 @@ struct st_subtile {
     __device__ st_subtile(ST &src, int2 rowcol) {
         row_offset = rowcol.x * height * underlying_width;
         col_offset = rowcol.y * width;
-        data = &src.data[(row_offset + col_offset) * kittens::TILE_COL_DIM<T> * kittens::TILE_ROW_DIM<T>];
+        data = &src.data[(row_offset + col_offset) * underlying_tile_cols * underlying_tile_rows];
     }
 
     // single-coord operator[] is left undefined as it would likely be an improper use of st_subtile type.
