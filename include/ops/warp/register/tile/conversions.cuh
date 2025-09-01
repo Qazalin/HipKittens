@@ -324,16 +324,41 @@ __device__ inline rt_base<T2, typename ducks::rt_layout::transpose<layout>::type
  * @return A reference to the swapped register tile.
  */
 #ifdef KITTENS_CDNA4
-template<ducks::rt_layout::all layout1, typename T2, int _rows, int _cols, ducks::rt_layout::all layout2>
-__device__ static inline rt<T2, _rows, _cols, layout1>& swap_layout_inplace(rt<T2, _rows, _cols, layout2> &tile) {
-    #pragma unroll
-    for(int i = 0; i < tile.height; i++) {
-        #pragma unroll
-        for(int j = 0; j < tile.width; j++) {
-            swap_layout_inplace<layout1>(tile.tiles[i][j]);
+template<ducks::rt_layout::all layout1, ducks::rt_matrix::all matrix_layout1, typename T, int _rows, int _cols, ducks::rt_layout::all layout2, ducks::rt_matrix::all matrix_layout2>
+__device__ static inline rt<T, _rows, _cols, layout1, matrix_layout1>& swap_layout_inplace(rt<T, _rows, _cols, layout2, matrix_layout2> &tile) {
+    if constexpr (std::is_same_v<matrix_layout1, typename ducks::rt_matrix::mfma_32x32x16> && std::is_same_v<matrix_layout2, typename ducks::rt_matrix::mfma_16x16x32>) {
+
+        if constexpr (std::is_same_v<layout1, typename ducks::rt_layout::col> && std::is_same_v<layout2, typename ducks::rt_layout::accumulator_col>) {
+            // src consists of 16x16 tiles while dst consists of 16x32 tiles.
+            // the reduction dimension (rows) stays the same, while the column dimension (cols) is doubled.
+            // For every two 16x16 tiles in src along the (width) axis, we fill one 16x32 tile in dst along the (width) axis.
+            // To do this for bf16, we issue 4 v_permlane16_swap instructions.
+            static_assert(std::is_same_v<T, bf16>, "only supports bf16");
+
+            #pragma unroll
+            for (int i = 0; i < tile.height; i++) {
+                #pragma unroll
+                for (int j = 0; j < tile.width; j++) {
+
+                    // now we are at the granularity of a single 16x32 tile in dst.
+                    // V_PERMLANE16_SWAP_B32:
+                    // Swap data between two vector registers. Odd rows of the first operand are swapped with even rows of the
+                    // second operand (one row is 16 lanes).
+                    #pragma unroll
+                    for (int k = 0; k < 2; k++) {
+                        uint2_t res = __builtin_amdgcn_permlane16_swap(*reinterpret_cast<const uint32_t *>(&tile.tiles[i][j * 2].data[k]), *reinterpret_cast<const uint32_t *>(&tile.tiles[i][j * 2 + 1].data[k]), false, true);
+                        *reinterpret_cast<uint32_t *>(&tile.tiles[i][j * 2].data[k]) = res.x;
+                        *reinterpret_cast<uint32_t *>(&tile.tiles[i][j * 2 + 1].data[k]) = res.y;
+                    }
+                }
+            }
+        } else {
+            static_assert(false, "Unsupported layout swap");
         }
+    } else {
+        static_assert(false, "Unsupported matrix layout swap");
     }
-    return *(rt<T2, _rows, _cols, layout1>*)(&tile);
+    return *(rt<T, _rows, _cols, layout1, matrix_layout1>*)(&tile);
 }
 #else
 template<typename T2, int _rows, int _cols, ducks::rt_layout::all layout>
