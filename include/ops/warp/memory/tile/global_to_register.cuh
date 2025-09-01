@@ -213,7 +213,7 @@ __device__ inline static void load(RT &dst, const GL &src, const COORD &idx) {
     const int row_stride = src.template stride<axis>();
     int laneid = kittens::laneid();
 
-    int row_offset = laneid%(dst.tile_size_row), col_offset = 4*(laneid/dst.tile_size_row);
+    int row_offset = laneid%(dst.tile_size_row), col_offset = dst.elements_per_base_tile*(laneid/dst.tile_size_row);
 
     uint32_t buffer_size = src.batch() * src.depth() * src.rows() * src.cols() * sizeof(U);
     std::uintptr_t as_int = reinterpret_cast<std::uintptr_t>(src_ptr);
@@ -223,66 +223,32 @@ __device__ inline static void load(RT &dst, const GL &src, const COORD &idx) {
     #pragma unroll
     for(int i = 0; i < dst.height; i++) {
         int row = dst.tile_size_row*i + row_offset;
-
         #pragma unroll
         for(int j = 0; j < dst.width; j++) {
-
-            if constexpr (std::is_same_v<typename RT::matrix_layout, mfma_32x32x16>) {
-                #pragma unroll
-                for (int k = 0; k < 4; k++) {
-                    int col = dst.tile_size_col*j + col_offset + k*8;
-
-                    U2* tmp;
-                    if constexpr (sizeof(U2) == 4) { // bf16_2
-                        float2 loaded = std::bit_cast<float2>(llvm_amdgcn_raw_buffer_load_b64(
-                            std::bit_cast<i32x4>(br),
-                            (row*row_stride + col) * sizeof(U),
-                            0,
-                            0
-                        ));
-                        tmp = reinterpret_cast<U2*>(&loaded);
-                    }
-                    else { // float2
-                        float4 loaded;
-                        loaded = std::bit_cast<float4>(llvm_amdgcn_raw_buffer_load_b128(
-                            std::bit_cast<i32x4>(br),
-                            (row*row_stride + col) * sizeof(U),
-                            0,
-                            0
-                        ));
-                        tmp = reinterpret_cast<U2*>(&loaded);
-                    }
-                    #pragma unroll
-                    for(int l = 0; l < 2; l++) {
-                        dst.tiles[i][j].data[k*2 + l] = base_types::convertor<T2, U2>::convert(tmp[l]);
-                    }
-                }
-            } else {
-                int col = dst.tile_size_col*j + col_offset;
-                U2* tmp;
-                if constexpr (sizeof(U2) == 4) { // bf16_2
-                    float2 loaded = std::bit_cast<float2>(llvm_amdgcn_raw_buffer_load_b64(
-                        std::bit_cast<i32x4>(br),
-                        (row*row_stride + col) * sizeof(U),
-                        0,
-                        0
-                    ));
-                    tmp = reinterpret_cast<U2*>(&loaded);
-                }
-                else { // float2
-                    float4 loaded;
-                    loaded = std::bit_cast<float4>(llvm_amdgcn_raw_buffer_load_b128(
-                        std::bit_cast<i32x4>(br),
-                        (row*row_stride + col) * sizeof(U),
-                        0,
-                        0
-                    ));
-                    tmp = reinterpret_cast<U2*>(&loaded);
-                }
-                #pragma unroll
-                for(int l = 0; l < 2; l++) {
-                    dst.tiles[i][j].data[l] = base_types::convertor<T2, U2>::convert(tmp[l]);
-                }
+            int col = dst.tile_size_col*j + col_offset;
+            U2* tmp;
+            if constexpr (std::is_same_v<U2, bf16_2>) {
+                float2 loaded = std::bit_cast<float2>(llvm_amdgcn_raw_buffer_load_b64(
+                    std::bit_cast<i32x4>(br),
+                    (row*row_stride + col) * sizeof(U),
+                    0,
+                    0
+                ));
+                tmp = reinterpret_cast<U2*>(&loaded);
+            }
+            else { // float2
+                float4 loaded;
+                loaded = std::bit_cast<float4>(llvm_amdgcn_raw_buffer_load_b128(
+                    std::bit_cast<i32x4>(br),
+                    (row*row_stride + col) * sizeof(U),
+                    0,
+                    0
+                ));
+                tmp = reinterpret_cast<U2*>(&loaded);
+            }
+            #pragma unroll
+            for(int k = 0; k < dst.packed_per_thread; k++) {
+                dst.tiles[i][j].data[k] = base_types::convertor<T2, U2>::convert(tmp[k]);
             }
         }
     }
