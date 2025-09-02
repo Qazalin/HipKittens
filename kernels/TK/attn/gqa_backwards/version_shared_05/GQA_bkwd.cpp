@@ -23,7 +23,6 @@ template<int D, typename T=bf16, typename L=row_l, typename M=mfma_16x16x32> usi
 template<int D, typename T=bf16, typename L=row_l, typename M=mfma_16x16x32> using kv_tile_T = rt<T, D, WARP_SIZE_KV, L, M>;
 template<int D, typename T=float, typename L=accum_col_l, typename M=mfma_16x16x32> using attn_tile = rt<T, WARP_SIZE_QO, WARP_SIZE_KV, L, M>;
 
-
 template<int D> struct attn_prep_globals { 
     gl<bf16, -1, -1, -1, -1> Og;
     gl<bf16, -1, -1, -1, -1> dOg; 
@@ -261,6 +260,7 @@ __global__ void attend_bwd_combined_ker(const attn_bwd_combined_globals<D> g) {
         zero(P_ij);
         mma_ABt(P_ij, Q_i, K_j, P_ij);
         mul(P_ij, P_ij, scale_factor);
+
         // 11. P_ij = exp(S_ij - L_i)
         sub_row(P_ij, P_ij, L_i);
         exp(P_ij, P_ij);
@@ -283,7 +283,6 @@ __global__ void attend_bwd_combined_ker(const attn_bwd_combined_globals<D> g) {
         load(dO_i, g.dOg, {batch_idx, head_idx, i, 0});
         P_ij_bf16_col = swap_layout_inplace<col_l, mfma_32x32x16>(P_ij_bf16);
         mma_AtB(dV_j_T, dO_i, P_ij_bf16_col, dV_j_T);
-
         // 16. dK_j += dS_ij^T @ Q_i   (128x64)=(128x16)x(16x64)
         load(*(qo_tile<D, bf16, col_l, mfma_32x32x16>*) (&Q_i), g.Q, {batch_idx, head_idx, i, 0});
         dP_ij_bf16_col = swap_layout_inplace<col_l, mfma_32x32x16>(dP_ij_bf16);
