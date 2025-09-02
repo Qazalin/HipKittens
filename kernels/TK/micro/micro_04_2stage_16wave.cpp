@@ -3,7 +3,7 @@
 using namespace kittens;
 
 constexpr int BLOCK_SIZE = 64;
-constexpr int M_BLOCK = 2;
+constexpr int M_BLOCK = 3;
 constexpr int N_BLOCK = 4;
 constexpr int DOT_SLICE = 32;
 
@@ -19,16 +19,16 @@ using G = kittens::group<NUM_PRODUCER_WORKERS>;
 using A_slice = rt_bf<BLOCK_SIZE, DOT_SLICE, row_l>;
 using B_slice = rt_bf<BLOCK_SIZE, DOT_SLICE, row_l>;
 
-#define M 8192
-#define K 8192
-#define N 8192
+#define M 7680
+#define K 7680
+#define N 7680
 
 struct micro_globals {
     gl<bf16, -1, -1, -1, -1> a, b;
     gl<bf16, -1, -1, -1, -1> c;
     dim3 grid()  { return dim3(N / NEW_COL_BLOCK_SIZE, M / NEW_ROW_BLOCK_SIZE); } 
     dim3 block() { return dim3(NUM_THREADS); } 
-    size_t dynamic_shared_memory() { return 98304; } 
+    size_t dynamic_shared_memory() { return (MAX_SHARED_MEMORY-4096); }
 };
 
 __global__ __launch_bounds__(NUM_THREADS, 2)
@@ -90,8 +90,8 @@ void micro_tk(const micro_globals g) {
             }
             __builtin_amdgcn_s_waitcnt(0);
         } else if (is_consumer) {
-            A_slice a0;
-            B_slice b0;
+            A_slice a0, a1;
+            B_slice b0, b1;
 
             load(a0, subtile_inplace<BLOCK_SIZE, DOT_SLICE>(As[tic][consumer_idx], {0,0}));
             load(b0, subtile_inplace<BLOCK_SIZE, DOT_SLICE>(Bs[tic][local_warp_id], {0,0}));
@@ -100,11 +100,11 @@ void micro_tk(const micro_globals g) {
             mma_ABt(C_accum, a0, b0, C_accum);
             __builtin_amdgcn_s_setprio(0);
 
-            load(a0, subtile_inplace<BLOCK_SIZE, DOT_SLICE>(As[tic][consumer_idx], {0,1}));
-            load(b0, subtile_inplace<BLOCK_SIZE, DOT_SLICE>(Bs[tic][local_warp_id], {0,1}));
+            load(a1, subtile_inplace<BLOCK_SIZE, DOT_SLICE>(As[tic][consumer_idx], {0,1}));
+            load(b1, subtile_inplace<BLOCK_SIZE, DOT_SLICE>(Bs[tic][local_warp_id], {0,1}));
             asm volatile("s_waitcnt lgkmcnt(0)");
             __builtin_amdgcn_s_setprio(1);
-            mma_ABt(C_accum, a0, b0, C_accum);
+            mma_ABt(C_accum, a1, b1, C_accum);
             __builtin_amdgcn_s_setprio(0);
         }
         __builtin_amdgcn_sched_barrier(0);
