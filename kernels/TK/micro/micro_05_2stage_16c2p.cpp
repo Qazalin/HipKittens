@@ -2,74 +2,15 @@
 #include "pyutils/pyutils.cuh"
 using namespace kittens;
 
-/*************************************************************************/
-
-struct lds_lane_ofs { uint32_t off0, off1; };
-
-// Lane-only prefill 
-template <typename U>
-__device__ inline lds_lane_ofs make_lds_lane_offsets() {
-    static_assert(sizeof(U) == 2, "only 16-bit dtypes");
-    constexpr int TR = kittens::TILE_ROW_DIM<U>;
-    constexpr int TC = kittens::TILE_COL_DIM<U>;
-    constexpr int subtile_stride = (TR * TC * sizeof(U)) / 2;
-
-    const int lane = kittens::laneid() % kittens::WARP_THREADS;
-    const int subtile_id = (lane % 32) / 16;           
-    const int col_bytes  = (lane / 32) * 16;           
-    const int row        = (lane % 16);                
-
-    const int b0   = row * TC * sizeof(U) + col_bytes; 
-    const int b1   = b0 + 32;                          
-    const int sw0  = ((b0 >> 8) << 4);
-    const int sw1  = ((b1 >> 8) << 4);
-    const int base = subtile_id * subtile_stride;
-
-    return { uint32_t(base + (b0 ^ sw0)), uint32_t(base + (b1 ^ sw1)) };
-}
-
-template <ducks::rt::all RT, ducks::st::all ST>
-__device__ inline void load_pc_swizzled(RT& dst, const ST& src, lds_lane_ofs lane) {
-    using U = typename ST::dtype;
-    static_assert(sizeof(U) == 2, "only 16-bit dtypes");
-
-    constexpr int TR = kittens::TILE_ROW_DIM<U>, TC = kittens::TILE_COL_DIM<U>;
-    constexpr int subtile_stride = (TR * TC * sizeof(U)) / 2;
-    constexpr int tile_stride    = subtile_stride * 2;                 
-    constexpr int row_stride     = tile_stride * ST::underlying_width; 
-
-    // base is the lds pointer for the subtile 
-    const uint32_t base = uint32_t(reinterpret_cast<uintptr_t>(&src.data[0]));
-    const uint32_t v0   = base + lane.off0;
-    const uint32_t v1   = base + lane.off1;
-
-    #pragma unroll
-    for (int i = 0; i < RT::height; ++i) {
-      #pragma unroll
-      for (int j = 0; j < RT::width; ++j) {
-        const int off = i * row_stride + j * tile_stride;
-        asm volatile("ds_read_b128 %0, %1 offset:%2"
-          : "=v"(*reinterpret_cast<float4*>(&dst.tiles[i][j].data[0]))
-          : "v"(v0), "i"(off) : "memory");
-        asm volatile("ds_read_b128 %0, %1 offset:%2"
-          : "=v"(*reinterpret_cast<float4*>(&dst.tiles[i][j].data[4]))
-          : "v"(v1), "i"(off) : "memory");
-      }
-    }
-}
-
-
-/*************************************************************************/
-
 constexpr int BLOCK_SIZE = 64;
-constexpr int M_BLOCK = 3;
+constexpr int M_BLOCK = 4; //3;
 constexpr int N_BLOCK = 4;
 constexpr int DOT_SLICE = 32;
 
-constexpr int NEW_ROW_BLOCK_SIZE = BLOCK_SIZE * M_BLOCK;
-constexpr int NEW_COL_BLOCK_SIZE = BLOCK_SIZE * N_BLOCK;
+constexpr int NEW_ROW_BLOCK_SIZE = BLOCK_SIZE * M_BLOCK; // 64 x 4 = 256
+constexpr int NEW_COL_BLOCK_SIZE = BLOCK_SIZE * N_BLOCK; // 64 x 4 = 256
 
-#define NUM_PRODUCER_WORKERS (4)
+#define NUM_PRODUCER_WORKERS (2)
 #define NUM_CONSUMER_WORKERS (M_BLOCK * 4)
 #define NUM_THREADS ((NUM_PRODUCER_WORKERS + NUM_CONSUMER_WORKERS) * kittens::WARP_THREADS)
 #define NUM_PRODUCER_THREADS (NUM_PRODUCER_WORKERS * kittens::WARP_THREADS)
@@ -78,9 +19,9 @@ using G = kittens::group<NUM_PRODUCER_WORKERS>;
 using A_slice = rt_bf<BLOCK_SIZE, DOT_SLICE, row_l>;
 using B_slice = rt_bf<BLOCK_SIZE, DOT_SLICE, row_l>;
 
-#define M 192*40
-#define K 192*40
-#define N 192*40
+#define M 8192 // 192*40
+#define K 8192 //192*40
+#define N 8192 //192*40
 
 __host__ __device__ inline int ceil_div(int a, int b) {
     return (a + b - 1) / b;
@@ -89,9 +30,9 @@ __host__ __device__ inline int ceil_div(int a, int b) {
 struct micro_globals {
     gl<bf16, -1, -1, -1, -1> a, b;
     gl<bf16, -1, -1, -1, -1> c;
-    dim3 grid()  { return dim3(N / NEW_COL_BLOCK_SIZE, M / NEW_ROW_BLOCK_SIZE); } 
+    dim3 grid()  { return dim3(ceil_div(N, NEW_COL_BLOCK_SIZE), ceil_div(M, NEW_ROW_BLOCK_SIZE)); } 
     dim3 block() { return dim3(NUM_THREADS); } 
-    size_t dynamic_shared_memory() { return (120000); }
+    size_t dynamic_shared_memory() { return (MAX_SHARED_MEMORY-4096); }
 };
 
 __global__ __launch_bounds__(NUM_THREADS, 2)
@@ -125,9 +66,13 @@ void micro_tk(const micro_globals g) {
     const int warp_id = kittens::warpid();
     const int local_warp_id = warp_id % 4;
     const int warp_group_id = kittens::warpgroupid();
-    const bool is_producer = (warp_group_id == 0);
-    const bool is_consumer = (warp_group_id > 0 && warp_group_id <= M_BLOCK);
-    const int consumer_idx = is_consumer ? warp_group_id - 1 : 0;
+    const bool is_producer = (warp_id == 0 || warp_id == 1); //  || warp_id == 2 || warp_id == 3);
+    const bool is_consumer = (!is_producer);
+    const int consumer_idx = (warp_id - (NUM_PRODUCER_WORKERS)) / 4;
+
+    if (laneid() == 0 && blockIdx.x == 0 && blockIdx.y == 0) {
+        printf("warp_id: %d, local_warp_id: %d, warp_group_id: %d, is_producer: %d, is_consumer: %d, consumer_idx: %d\n", warp_id, local_warp_id, warp_group_id, is_producer, is_consumer, consumer_idx);
+    }
     __syncthreads();
 
     // preswizzled offsets
@@ -139,7 +84,8 @@ void micro_tk(const micro_globals g) {
     uint32_t swizzled_offsets_B[memcpy_per_tile];
     G::prefill_swizzled_offsets(As[0][0], g.a, swizzled_offsets_A);
     G::prefill_swizzled_offsets(Bs[0][0], g.b, swizzled_offsets_B);
-    const lds_lane_ofs lane_ofs = make_lds_lane_offsets<bf16>();
+    A_slice A_tile;
+    const lds_lane_ofs lane_ofs = prefill_swizzled_offsets(A_tile, As[0][0]);
     
     // preload
     int tic = 0;
@@ -153,8 +99,8 @@ void micro_tk(const micro_globals g) {
         for (int n = 0; n < N_BLOCK; n++) {
             G::load<2, false>(Bs[tic][n], g.b, {0, 0, col + n, 0}, swizzled_offsets_B);
         }
-        asm volatile("s_waitcnt vmcnt(0)");
     }
+    asm volatile("s_waitcnt vmcnt(0)");
     __syncthreads();
 
 
@@ -174,21 +120,21 @@ void micro_tk(const micro_globals g) {
                 G::load<2, false>(Bs[toc][n], g.b, {0, 0, col + n,tile + 1}, swizzled_offsets_B);
             }
         } else {
-            A_slice a0, a1; 
-            B_slice b0, b1;
+            A_slice a0; 
+            B_slice b0;
 
-            load_pc_swizzled(a0, subtile_inplace<BLOCK_SIZE, DOT_SLICE>(As[tic][consumer_idx], {0,0}), lane_ofs);
-            load_pc_swizzled(b0, subtile_inplace<BLOCK_SIZE, DOT_SLICE>(Bs[tic][local_warp_id], {0,0}), lane_ofs);
+            load(a0, subtile_inplace<BLOCK_SIZE, DOT_SLICE>(As[tic][consumer_idx], {0,0}), lane_ofs);
+            load(b0, subtile_inplace<BLOCK_SIZE, DOT_SLICE>(Bs[tic][local_warp_id], {0,0}), lane_ofs);
             asm volatile("s_waitcnt lgkmcnt(0)");
             __builtin_amdgcn_s_setprio(1);
             mma_ABt(C_accum, a0, b0, C_accum);
             __builtin_amdgcn_s_setprio(0);
 
-            load_pc_swizzled(a1, subtile_inplace<BLOCK_SIZE, DOT_SLICE>(As[tic][consumer_idx], {0,1}), lane_ofs);
-            load_pc_swizzled(b1, subtile_inplace<BLOCK_SIZE, DOT_SLICE>(Bs[tic][local_warp_id], {0,1}), lane_ofs);
+            load(a0, subtile_inplace<BLOCK_SIZE, DOT_SLICE>(As[tic][consumer_idx], {0,1}), lane_ofs);
+            load(b0, subtile_inplace<BLOCK_SIZE, DOT_SLICE>(Bs[tic][local_warp_id], {0,1}), lane_ofs);
             asm volatile("s_waitcnt lgkmcnt(0)");
             __builtin_amdgcn_s_setprio(1);
-            mma_ABt(C_accum, a1, b1, C_accum);
+            mma_ABt(C_accum, a0, b0, C_accum);
             __builtin_amdgcn_s_setprio(0);
         }
         __builtin_amdgcn_s_setprio(1);
@@ -201,14 +147,14 @@ void micro_tk(const micro_globals g) {
     if (is_consumer) { 
         A_slice a0;
         B_slice b0;
-        load_pc_swizzled(a0, subtile_inplace<BLOCK_SIZE, DOT_SLICE>(As[tic][consumer_idx], {0,0}), lane_ofs);
-        load_pc_swizzled(b0, subtile_inplace<BLOCK_SIZE, DOT_SLICE>(Bs[tic][local_warp_id], {0,0}), lane_ofs);
+        load(a0, subtile_inplace<BLOCK_SIZE, DOT_SLICE>(As[tic][consumer_idx], {0,0}), lane_ofs);
+        load(b0, subtile_inplace<BLOCK_SIZE, DOT_SLICE>(Bs[tic][local_warp_id], {0,0}), lane_ofs);
         asm volatile("s_waitcnt lgkmcnt(0)");
         __builtin_amdgcn_s_setprio(1);
         mma_ABt(C_accum, a0, b0, C_accum);
         __builtin_amdgcn_s_setprio(0);
-        load_pc_swizzled(a0, subtile_inplace<BLOCK_SIZE, DOT_SLICE>(As[tic][consumer_idx], {0,1}), lane_ofs);
-        load_pc_swizzled(b0, subtile_inplace<BLOCK_SIZE, DOT_SLICE>(Bs[tic][local_warp_id], {0,1}), lane_ofs);
+        load(a0, subtile_inplace<BLOCK_SIZE, DOT_SLICE>(As[tic][consumer_idx], {0,1}), lane_ofs);
+        load(b0, subtile_inplace<BLOCK_SIZE, DOT_SLICE>(Bs[tic][local_warp_id], {0,1}), lane_ofs);
         asm volatile("s_waitcnt lgkmcnt(0)");
         __builtin_amdgcn_s_setprio(1);
         mma_ABt(C_accum, a0, b0, C_accum);
