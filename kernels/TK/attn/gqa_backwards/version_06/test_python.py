@@ -1,7 +1,8 @@
 import torch
 import random
 import math
-import tk_kernel
+import tk_kernel_fwd
+import tk_kernel_bkwd
 import time
 
 use_aiter = True
@@ -38,6 +39,19 @@ def efficiency(flop, time):
     flop = flop / 1e12  # convert to TFLOPS
     time = time / 1e3   # convert to seconds
     return flop / time
+
+def robustness_check(ref, pred):
+    ref = ref.float()
+    pred = pred.float()
+    diff = (ref - pred).abs()
+    denom = ref.abs().clamp_min(1e-6)
+    mask = (diff > (0.001 + 0.05 * denom))
+    error_count = mask.sum().item()
+    numel = ref.numel()
+    rel_error = error_count / numel
+    l2_error = (diff.pow(2).sum().sqrt() / ref.pow(2).sum().sqrt()).item()
+    cos = torch.nn.functional.cosine_similarity(ref.flatten(), pred.flatten(), dim=0).item()
+    return diff, error_count, numel, rel_error, l2_error, cos, mask  
 
 
 # **************************************************
@@ -260,6 +274,7 @@ out_tiled_bnhd = O_tiled.transpose(1, 2) # BHND -> BNHD
 q_grad_tiled_bnhd = dQ_tiled.transpose(1, 2) # BHND -> BNHD
 k_grad_tiled_bnhd = dK_tiled.transpose(1, 2) # BHND -> BNHD
 v_grad_tiled_bnhd = dV_tiled.transpose(1, 2) # BHND -> BNHD
+L_tiled = L_tiled.unsqueeze(-1)
 
 # **************************************************
 # ThunderKittens
@@ -268,10 +283,17 @@ v_grad_tiled_bnhd = dV_tiled.transpose(1, 2) # BHND -> BNHD
 # Get forwards pass outputs
 Q_tk = Q_bhnd.transpose(1, 2).bfloat16().clone().contiguous().detach().requires_grad_(True)  
 K_tk = K_bhnd.transpose(1, 2).bfloat16().clone().contiguous().detach().requires_grad_(True)  
-V_tk = V_bhnd.transpose(1, 2).bfloat16().clone().contiguous().detach().requires_grad_(True)  
-O_tk = O_tiled.transpose(1, 2).bfloat16().clone().contiguous()
+V_tk = V_bhnd.transpose(1, 2).bfloat16().clone().contiguous().detach().requires_grad_(True) 
 dO_tk = dO_bhnd.transpose(1, 2).bfloat16().clone().contiguous()
-L_tk = L_tiled.float().unsqueeze(-1).contiguous()
+
+# Call TK forward to get O and L
+O_tk = torch.zeros_like(out_tiled_bnhd).bfloat16().clone().contiguous()
+L_tk = torch.zeros_like(L_tiled).float().contiguous()
+
+tk_kernel_fwd.dispatch_fwd(Q_tk, K_tk, V_tk, O_tk, L_tk)
+torch.cuda.synchronize()
+print(f"O_tk.shape: {O_tk.shape}")
+print(f"L_tk.shape: {L_tk.shape}")
 
 # TK
 print("Running ThunderKittens ...")
@@ -283,13 +305,13 @@ for _ in range(num_warmup):
     dV_tk = torch.zeros_like(v_grad_tiled_bnhd).bfloat16().contiguous()
     delta_tk = torch.zeros_like(delta_tiled).float().transpose(-1, -2).contiguous()
 
-    tk_kernel.dispatch_prep(
+    tk_kernel_bkwd.dispatch_prep(
         O_tk,     # Og
         dO_tk,    # dOg
         delta_tk, # delta
     )
 
-    tk_kernel.dispatch_bwd_combined(
+    tk_kernel_bkwd.dispatch_bwd_combined(
         Q_tk,     
         K_tk,     
         V_tk,     
@@ -302,7 +324,7 @@ for _ in range(num_warmup):
         delta_tk
     )
 
-    tk_kernel.dispatch_dq_shuffle(
+    tk_kernel_bkwd.dispatch_dq_shuffle(
         dQ_tk_in,
         dQ_tk
     )
@@ -318,13 +340,13 @@ for _ in range(num_iters):
     torch.cuda.synchronize()
     start_event.record()
 
-    tk_kernel.dispatch_prep(
+    tk_kernel_bkwd.dispatch_prep(
         O_tk,     # Og
         dO_tk,    # dOg
         delta_tk, # delta
     )
 
-    tk_kernel.dispatch_bwd_combined(
+    tk_kernel_bkwd.dispatch_bwd_combined(
         Q_tk,     
         K_tk,     
         V_tk,     
@@ -337,7 +359,7 @@ for _ in range(num_iters):
         delta_tk
     )
 
-    tk_kernel.dispatch_dq_shuffle(
+    tk_kernel_bkwd.dispatch_dq_shuffle(
         dQ_tk_in,
         dQ_tk
     )
@@ -382,10 +404,18 @@ print(f"Q grad max error: {q_grad_tiled_diff.max().item():.6f}")
 print(f"K grad max error: {k_grad_tiled_diff.max().item():.6f}")
 print(f"V grad max error: {v_grad_tiled_diff.max().item():.6f}")
 
+num_print = 8
+# TK vs Tiled
+print(f"\nTK vs Tiled comparison:")
+print("\nO outputs:")
+print("TK: ", O_tk[0, 0, :num_print, 0], "Max:", O_tk.max().item())
+print("Tiled: ", out_tiled_bnhd[0, 0, :num_print, 0], "Max:", out_tiled_bnhd.max().item())
+print("\nL outputs:")
+print("TK: ", L_tk[0, 0, :num_print, 0], "Max:", L_tk.max().item())
+print("Tiled: ", L_tiled[0, 0, :num_print, 0], "Max:", L_tiled.max().item())
+
 # TK vs PyTorch
 print(f"\nTK vs PyTorch comparison:")
-
-num_print = 8
 print("\nDelta outputs:")
 print("TK: ", delta_tk[0, 0, :num_print, 0], "Max:", delta_tk.max().item())
 print("PyTorch: ", delta_tiled[0, 0, :num_print, 0], "Max:", delta_tiled.max().item())
@@ -404,23 +434,25 @@ print("Gradient Q outputs:")
 print("TK: ", dQ_tk[0, 0, :num_print, :num_print], "Max:", dQ_tk.max().item())
 print("PyTorch: ", q_grad_pytorch[0, 0, :num_print, :num_print], "Max:", q_grad_pytorch.max().item())
 
+
+# **************************************************
+# TK vs Tiled (robust tolerances & metrics)
+# **************************************************
+# Compare O and L with tiled
+print(f"\nRobustness checks (TK vs Tiled):") 
+o_diff, o_err_cnt, o_total, o_rel_error, o_l2_error, o_cos, o_mask = robustness_check(O_tk, out_tiled_bnhd)
+l_diff, l_err_cnt, l_total, l_rel_error, l_l2_error, l_cos, l_mask = robustness_check(L_tk, L_tiled)
+print(f"O: max_abs={o_diff.max().item():.6f}, max_rel={o_rel_error:.4f}, "
+      f"rel_l2={o_l2_error:.4f}, cos={o_cos:.6f}, "
+      f"errors={o_err_cnt}/{o_total} ({100*o_err_cnt/o_total:.4f}%)")
+print(f"L: max_abs={l_diff.max().item():.6f}, max_rel={l_rel_error:.4f}, "
+      f"rel_l2={l_l2_error:.4f}, cos={l_cos:.6f}, "
+      f"errors={l_err_cnt}/{l_total} ({100*l_err_cnt/l_total:.4f}%)")
+
 # **************************************************
 # TK vs PyTorch (robust tolerances & metrics)
 # **************************************************
-print(f"\nRobustness checks (TK vs PyTorch):")
-
-def robustness_check(ref, pred):
-    ref = ref.float()
-    pred = pred.float()
-    diff = (ref - pred).abs()
-    denom = ref.abs().clamp_min(1e-6)
-    mask = (diff > (0.001 + 0.05 * denom))
-    error_count = mask.sum().item()
-    numel = ref.numel()
-    rel_error = error_count / numel
-    l2_error = (diff.pow(2).sum().sqrt() / ref.pow(2).sum().sqrt()).item()
-    cos = torch.nn.functional.cosine_similarity(ref.flatten(), pred.flatten(), dim=0).item()
-    return diff, error_count, numel, rel_error, l2_error, cos, mask   
+print(f"\nRobustness checks (TK vs PyTorch):") 
 
 # Compute diffs in float32 to avoid bf16 quantization in the comparison itself
 delta_diff, delta_err_cnt, delta_total, delta_rel_error, delta_l2_error, delta_cos, delta_mask = robustness_check(delta_tiled, delta_tk)

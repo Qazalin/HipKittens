@@ -1169,7 +1169,7 @@ void dispatch_dq_shuffle(attn_dq_shuffle_globals<D> g) {
     hipDeviceSynchronize();
 }
 
-PYBIND11_MODULE(tk_kernel, m) {
+PYBIND11_MODULE(tk_kernel_bkwd, m) {
     m.doc() = "tk_kernel python module";
 
     py::bind_function<dispatch_prep<ATTN_D>>(m, "dispatch_prep", 
