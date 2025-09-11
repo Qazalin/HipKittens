@@ -4,14 +4,14 @@
 #include "pyutils/pyutils.cuh"
 
 
-constexpr int B = 1;
-constexpr int H = 1;
-constexpr int N = 512;
-constexpr int HEAD_D = 128;
-constexpr int D = HEAD_D*H;
+constexpr int B = 16;
+constexpr int H = 16;
+constexpr int N = 1024;
+constexpr int HEAD_D = 64;
+constexpr int D = HEAD_D * H;
 
 
-#define NUM_WORKERS (2) 
+#define NUM_WORKERS (4) 
 #define NUM_THREADS (NUM_WORKERS*kittens::WARP_THREADS)
 
 using namespace kittens;
@@ -35,7 +35,7 @@ __device__ void dropout_mask(T &dst, float keep_prob) {
 
 template<int _d_model> struct norm_globals {
     static constexpr int d_model = _d_model;
-    static constexpr int dropout_p = 0.0;
+    static constexpr int dropout_p = 0.01;
 
     // global descriptors
     using x_gl            = gl<bf16, -1, -1, -1, -1>;
@@ -45,6 +45,7 @@ template<int _d_model> struct norm_globals {
     using norm_weight_gl  = gl<bf16, -1, -1, -1, -1>;
     using norm_bias_gl    = gl<bf16, -1, -1, -1, -1>;
 
+
     // global pointers
     x_gl x;
     residual_gl residual;
@@ -53,12 +54,12 @@ template<int _d_model> struct norm_globals {
     norm_weight_gl norm_weight;
     norm_bias_gl norm_bias;
 
-    const int n_tile_size = N / 2;
-    const int n_per_tile = 2;
+    const int n_per_tile = 4;
+    const int n_tile_size = N / n_per_tile;
 
     dim3 grid() { return dim3(n_tile_size, B, 1); }
     dim3 block() { return dim3(NUM_THREADS); }
-    size_t dynamic_shared_memory() { return 25480; }
+    size_t dynamic_shared_memory() { return NUM_WORKERS*D*sizeof(bf16)*2*1 + D*sizeof(bf16)*2; }
 };
 
 template<int D> __launch_bounds__(NUM_THREADS, 2)
@@ -67,72 +68,54 @@ __global__ void layernorm_tk(const norm_globals<D> g) {
     auto warpid = kittens::warpid();
     auto lane   = kittens::laneid();
 
-    int batch = blockIdx.y;
-    int seq_start = blockIdx.x*2;
+    const int batch = blockIdx.y;
+    const int seq_start = blockIdx.x*g.n_per_tile;
 
     extern __shared__ alignment_dummy __shm[];
     shared_allocator al((int*)&__shm[0]);
 
     static constexpr int d_model = D;
-    using vec_smem_1xD = sv_bf<d_model>;
-    using tile_smem_1xD = st<bf16, 1, d_model>;
-    using tile_reg_1xD = rt_bf<1, d_model>;
-
-    vec_smem_1xD (&x_s)           [2][NUM_WORKERS] = al.allocate<vec_smem_1xD,2,NUM_WORKERS>();
-    vec_smem_1xD (&residual_s)    [2][NUM_WORKERS] = al.allocate<vec_smem_1xD,2,NUM_WORKERS>();  
+    using vec_smem_1xD = sv<bf16, d_model>;
+    vec_smem_1xD (&x_s)[NUM_WORKERS] = al.allocate<vec_smem_1xD,NUM_WORKERS>();
+    vec_smem_1xD (&residual_s)[NUM_WORKERS] = al.allocate<vec_smem_1xD,NUM_WORKERS>();  
     vec_smem_1xD (&norm_weight_s) = al.allocate<vec_smem_1xD>(); 
     vec_smem_1xD (&norm_bias_s  ) = al.allocate<vec_smem_1xD>();                  
 
-    // pipelining
-    int tic = 0, toc = 1;
-
     // global loads
-    if (warpid == 0) { 
+    if (warpid == 0) {
         load(norm_bias_s, g.norm_bias, {0,0,0,0});
         load(norm_weight_s, g.norm_weight, {0,0,0,0});
     }
+    __syncthreads();
  
     bf16 mean = __float2bfloat16(0.0f);
     bf16 var  = __float2bfloat16(0.0f);      
 
-    load(x_s[warpid][tic], g.x, {batch, 0, seq_start+warpid, 0});
-    load(residual_s[warpid][tic], g.residual, {batch, 0, seq_start+warpid, 0});
+    int idx = seq_start + warpid;
+    load(x_s[warpid], g.x, {0, batch, idx, 0});
+    load(residual_s[warpid], g.residual, {0, batch, idx, 0});
     __syncthreads();
     
-    int n_blocks = g.n_per_tile/NUM_WORKERS; 
-    for (int block = 0; block < n_blocks; block ++, tic ^=1, toc ^=1) { 
-        auto cur_idx  = (block + 0)*NUM_WORKERS + warpid;
-        auto next_idx = (block + 1)*NUM_WORKERS + warpid; 
+    dropout_mask(x_s[warpid], g.dropout_p); 
+    add(residual_s[warpid], residual_s[warpid], x_s[warpid]);    
+    store(g.o_resid, residual_s[warpid], {0, batch, seq_start+warpid, 0});
 
-        // kick off load for the next block
-        if( block < n_blocks - 1 ) {
-            load(x_s[warpid][toc], g.x, {batch, 0, seq_start+next_idx, 0});
-            load(residual_s[warpid][toc], g.residual, {batch, 0, seq_start+next_idx, 0});
-        }
-        __syncthreads();
+    sum(mean, residual_s[warpid]);
+    mean = mean / __float2bfloat16(d_model);
+    sub(residual_s[warpid], residual_s[warpid], mean);  
+    mul(x_s[warpid], residual_s[warpid], residual_s[warpid]);
+    sum(var, x_s[warpid]);
+    var = var / __float2bfloat16(d_model);
+    var = __float2bfloat16(sqrt(__bfloat162float(var + __float2bfloat16(1e-05f))));
 
-        dropout_mask(x_s[warpid][tic], g.dropout_p); 
-        add(residual_s[warpid][tic], residual_s[warpid][tic], x_s[warpid][tic]);    
-        store(g.o_resid, residual_s[warpid][tic], {batch, 0, seq_start+cur_idx, 0});
-        __syncthreads();
+    // compute norm
+    div(residual_s[warpid], residual_s[warpid], var);
+    mul(residual_s[warpid], residual_s[warpid], norm_weight_s); 
+    add(residual_s[warpid], residual_s[warpid], norm_bias_s);
+    __syncthreads();
 
-        sum(mean, residual_s[warpid][tic]);
-        mean = mean / __float2bfloat16(d_model);
-        sub(residual_s[warpid][tic], residual_s[warpid][tic], mean);  
-        mul(x_s[warpid][tic], residual_s[warpid][tic], residual_s[warpid][tic]);
-        sum(var, x_s[warpid][tic]);
-        var = var / __float2bfloat16(d_model);
-        var = __float2bfloat16(sqrt(__bfloat162float(var + __float2bfloat16(1e-05f))));
-
-        // compute norm
-        div(residual_s[warpid][tic], residual_s[warpid][tic], var);
-        mul(residual_s[warpid][tic], residual_s[warpid][tic], norm_weight_s); 
-        add(residual_s[warpid][tic], residual_s[warpid][tic], norm_bias_s);
-        __syncthreads();
-
-        // save output
-        store(g.o, residual_s[warpid][tic], {batch, 0, seq_start+cur_idx, 0});
-    }
+    // save output
+    store(g.o, residual_s[warpid], {0, batch, seq_start+warpid, 0});
 }
 
 template<int D>

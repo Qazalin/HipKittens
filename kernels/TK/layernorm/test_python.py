@@ -7,9 +7,12 @@ import math
 import tk_kernel
 import time
 
-B = 1
-N = 512
-D = 128
+B = 16
+H = 16
+N = 1024
+HEAD_D = 64
+D = HEAD_D * H
+DROPOUT_P = 0.01
 
 norm = nn.LayerNorm(D).cuda()
 torch.random.manual_seed(42)
@@ -44,7 +47,7 @@ def efficiency(flop, time):
     return flop / time
 
 
-def get_output(x, residual, norm, dropout_p=0.00):
+def get_output(x, residual, norm, dropout_p=DROPOUT_P):
     # 1. dropout on x
     mask = torch.bernoulli(torch.full_like(x, 1 - dropout_p))
     dropped = x * mask / (1 - dropout_p) 
@@ -68,7 +71,7 @@ def get_output(x, residual, norm, dropout_p=0.00):
 
 
 def pytorch_ref(x, residual, norm):
-    dropped = torch.nn.functional.dropout(x, p=0.00)
+    dropped = torch.nn.functional.dropout(x, p=DROPOUT_P)
     residual = (residual + dropped) if residual is not None else dropped
     x = norm(residual.to(dtype=norm.weight.dtype))
     return x, residual
@@ -76,8 +79,8 @@ def pytorch_ref(x, residual, norm):
 start_event = torch.cuda.Event(enable_timing=True) # in milliseconds
 end_event = torch.cuda.Event(enable_timing=True)
 flops_ref = flops(B, N, D)
-num_warmup = 20
-num_iters = 20
+num_warmup = 50
+num_iters = 50
 
 # Benchmark and test correctness
 # PyTorch
@@ -101,11 +104,12 @@ print(f"PyTorch performance: {eff:.2f} TFLOPS for {B=} {N=} {D=}.")
 # TK
 o_tk = torch.zeros_like(o_ref).bfloat16()
 o_resid_tk = torch.zeros_like(new_residual_ref).bfloat16()
-norm_weight_tk = torch.tensor(norm.weight, dtype=torch.bfloat16, device='cuda')
-norm_bias_tk = torch.tensor(norm.bias, dtype=torch.bfloat16, device='cuda')
+norm_weight_tk = norm.weight.detach().clone().to(dtype=torch.bfloat16, device='cuda')
+norm_bias_tk = norm.bias.detach().clone().to(dtype=torch.bfloat16, device='cuda')
 timings = []
 for _ in range(num_warmup):
     tk_kernel.dispatch_micro(x, residual, o_tk, o_resid_tk, norm_weight_tk, norm_bias_tk)
+print("done warmup")
 for _ in range(num_iters):
     torch.cuda.synchronize()
     start_event.record()
@@ -127,8 +131,6 @@ print(f"max_diff: {max_diff}")
 if max_diff > 0.1:
     print(f"o: ", o_ref[0, 0, :8])
     print(f"o_tk: ", o_tk[0, 0, :8])
-
-    breakpoint()
 
 o_resid_diff = new_residual_ref - o_resid_tk
 max_diff = o_resid_diff.abs().max()
