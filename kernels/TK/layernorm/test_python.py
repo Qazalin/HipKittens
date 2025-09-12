@@ -2,11 +2,7 @@ import torch
 import torch.nn as nn
 from tqdm import trange
 import numpy as np
-import sys
-import math
 import tk_kernel
-import time
-import aiter
 
 B = 16
 H = 16
@@ -24,19 +20,10 @@ residual = torch.randn((B, N, D), dtype=torch.bfloat16, device='cuda').requires_
 def flops(batch, seqlen, hidden_dim):
     """Calculate FLOPs for LayerNorm operation."""
     B, N, D = batch, seqlen, hidden_dim
-    
-    # Mean: sum across D dimension
-    mean_flops = B * N * D
-    
-    # Variance: (x - mean)^2, then sum, then divide
-    var_flops = B * N * D * 3  # subtract, square, sum
-    
-    # Normalization: (x - mean) / sqrt(var)  
-    norm_flops = B * N * D * 2  # subtract, divide
-    
-    # Scale and shift: x * weight + bias
+    mean_flops = B * N * D    
+    var_flops = B * N * D * 3  # subtract, square, sum    
+    norm_flops = B * N * D * 2  # subtract, divide    
     scale_shift_flops = B * N * D * 2  # multiply, add
-    
     total_flops = mean_flops + var_flops + norm_flops + scale_shift_flops
     return total_flops
 
@@ -98,9 +85,9 @@ for _ in range(num_iters):
     torch.cuda.synchronize()
     elapsed_time = start_event.elapsed_time(end_event)
     timings.append(elapsed_time)
-avg_time = sum(timings) / len(timings)
-eff = efficiency(flops_ref, avg_time)
-print(f"PyTorch average execution time: {avg_time:.4f} ms")
+avg_time_ref = sum(timings) / len(timings)
+eff = efficiency(flops_ref, avg_time_ref)
+print(f"PyTorch average execution time: {avg_time_ref:.4f} ms")
 print(f"PyTorch performance: {eff:.2f} TFLOPS for {B=} {N=} {D=}.")
 
 
@@ -122,7 +109,7 @@ avg_time_compiled = sum(timings_compiled) / len(timings_compiled)
 eff_compiled = efficiency(flops_ref, avg_time_compiled)
 print(f"PyTorch compiled average execution time: {avg_time_compiled:.4f} ms")
 print(f"PyTorch compiled performance: {eff_compiled:.2f} TFLOPS for {B=} {N=} {D=}.")
-speedup = avg_time / avg_time_compiled
+speedup = avg_time_ref / avg_time_compiled
 print(f"Speedup from torch.compile: {speedup:.2f}x")
 
 
@@ -148,6 +135,8 @@ avg_time = sum(timings) / len(timings)
 eff = efficiency(flops_ref, avg_time)
 print(f"TK average execution time: {avg_time:.4f} ms")
 print(f"TK performance: {eff:.2f} TFLOPS for {B=} {N=} {D=}.")
+speedup = avg_time_ref / avg_time
+print(f"Speedup from TK: {speedup:.2f}x")
 
 # Correctness
 print("\nCorrectness:")
