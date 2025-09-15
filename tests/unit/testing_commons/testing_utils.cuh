@@ -189,23 +189,44 @@ test_result validate(T1 *d_i, T2 *d_o, const std::vector<float> &i_ref, std::vec
     std::cout << "test `" << test_name << "` ";
     bool good = true;
     float max_diff = 0;
-    int max_diff_idx = 0;
+    int max_diff_idx = -1;
+    int first_mismatch_idx = -1;
+    float first_ref_val = 0, first_out_val = 0;
+    float max_ref_val = 0, max_out_val = 0;
     for(int i = 0; i < output_size; i++) {
-        if(abs(o_ref[i] - o[i]) > eps) {
+        float diff = abs(o_ref[i] - o[i]);
+        if(diff > eps) {
             good = false;
-            max_diff = std::max(max_diff, abs(o_ref[i] - o[i]));
-            max_diff_idx = i;
+            if(first_mismatch_idx == -1) {
+                first_mismatch_idx = i;
+                first_ref_val = o_ref[i];
+                first_out_val = o[i];
+            }
+            if(diff > max_diff) {
+                max_diff = diff;
+                max_diff_idx = i;
+                max_ref_val = o_ref[i];
+                max_out_val = o[i];
+            }
         }
     }
     if(good) std::cout << " -- PASSED" << std::endl;
-    else std::cout << " ----- ALERT! FAILED test `" << test_name << "` -----" << std::endl;
+    else {
+        std::cout << " ----- ALERT! FAILED test `" << test_name << "` -----" << std::endl;
+        if(first_mismatch_idx != -1) {
+            std::cout << "First mismatch at index " << first_mismatch_idx << ": ref=" << first_ref_val << ", out=" << first_out_val << std::endl;
+        }
+        if(max_diff_idx != -1) {
+            std::cout << "Largest mismatch at index " << max_diff_idx << ": ref=" << max_ref_val << ", out=" << max_out_val << ", diff=" << max_diff << std::endl;
+        }
+    }
     if(should_write_outputs && !good) {
         std::ofstream reffile("outputs/"+test_name+"_ref.txt");
         std::ofstream outfile("outputs/"+test_name+"_out.txt");
         for(int i = 0; i < output_size; i++) {
             reffile << o_ref[i] << ' ';
             outfile << o[i] << ' ';
-            if(i%cols == cols-1) {
+            if(i%16 == 15) {
                 reffile << '\n';
                 outfile << '\n';
             }
@@ -214,6 +235,9 @@ test_result validate(T1 *d_i, T2 *d_o, const std::vector<float> &i_ref, std::vec
         for(int i = 0; i < input_size; i++) {
             reffile << i_ref[i] << ' ';
             if(i%cols == cols-1) {
+                reffile << '\n';
+            }
+            if (i == input_size/2-1) {
                 reffile << '\n';
             }
         }

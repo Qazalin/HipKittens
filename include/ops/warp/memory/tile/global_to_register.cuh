@@ -51,7 +51,7 @@ __device__ inline static void load(RT &dst, const GL &src, const COORD &idx) {
     const int row_stride = src.template stride<axis>();
     int laneid = kittens::laneid();
 
-    int row_offset = laneid%32, col_offset = 4*base_types::packing<U2>::num()*(laneid/32);
+    int row_offset = laneid%kittens::TILE_ROW_DIM<T>, col_offset = 4*base_types::packing<U2>::num()*(laneid/kittens::TILE_ROW_DIM<T>);
 
     uint32_t buffer_size = src.batch() * src.depth() * src.rows() * src.cols() * sizeof(U);
     std::uintptr_t as_int = reinterpret_cast<std::uintptr_t>(src_ptr);
@@ -296,7 +296,7 @@ __device__ inline static void store(const GL &dst, const RT &src, const COORD &i
     const int row_stride = dst.template stride<axis>();
     int laneid = kittens::laneid();
 
-    int row_offset = laneid%32, col_offset = 4*base_types::packing<U2>::num()*(laneid/32);
+    int row_offset = laneid%kittens::TILE_ROW_DIM<T>, col_offset = 4*base_types::packing<U2>::num()*(laneid/kittens::TILE_ROW_DIM<T>);
 
     constexpr int REPEAT = 2;
 
@@ -448,23 +448,20 @@ __device__ inline static void store(const GL &dst, const RT &src, const COORD &i
     const int row_stride = dst.template stride<axis>();
     int laneid = kittens::laneid();
 
-    int col_offset = laneid%32;
-    int row_offset = laneid/32;
+    int col_offset = laneid%16;
+    int row_offset = laneid/16;
 
     #pragma unroll
     for(int i = 0; i < src.height; i++) {
         #pragma unroll
         for(int j = 0; j < src.width; j++) {
-            int col = src.tile_size_col*j + col_offset;
-            #pragma unroll
-            for (int ii = 0; ii < 4; ii++) {
-                int row = src.tile_size_row*i + ii * 8 + row_offset * 4;
+            int col = 16*j + col_offset;
+            int row = 16*i + row_offset * 4;
 
-                dst_ptr[(row+0)*row_stride + col] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[ii * 2].x);
-                dst_ptr[(row+1)*row_stride + col] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[ii * 2].y);
-                dst_ptr[(row+2)*row_stride + col] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[ii * 2 + 1].x);
-                dst_ptr[(row+3)*row_stride + col] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[ii * 2 + 1].y);
-            }
+            dst_ptr[(row+0)*row_stride + col] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[0].x);
+            dst_ptr[(row+1)*row_stride + col] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[0].y);
+            dst_ptr[(row+2)*row_stride + col] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[1].x);
+            dst_ptr[(row+3)*row_stride + col] = base_types::convertor<U, T>::convert(src.tiles[i][j].data[1].y);
         }
     }
 }

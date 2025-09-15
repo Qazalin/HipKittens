@@ -31,8 +31,13 @@ namespace kittens {
  * @brief Tile dimension constant.
  */
 #ifdef KITTENS_CDNA4
+#ifdef FP8_USE_16x128
+template<typename T> constexpr int TILE_COL_DIM = sizeof(T) == 1 ? 128 : 16;
+template<typename T> constexpr int TILE_ROW_DIM = 16;
+#else
 template<typename T> constexpr int TILE_COL_DIM = sizeof(T) == 1 ? 64 : 32;
 template<typename T> constexpr int TILE_ROW_DIM = 32;
+#endif
 #else
 template<typename T> constexpr int TILE_COL_DIM = sizeof(T) == 1 ? 32 : 16;
 template<typename T> constexpr int TILE_ROW_DIM = 16;
