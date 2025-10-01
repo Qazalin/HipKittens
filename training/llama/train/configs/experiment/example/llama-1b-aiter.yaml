@@ -26,7 +26,7 @@ trainer:
   val_check_interval: ${eval:1000 * ${.accumulate_grad_batches}}
   max_steps: 20000
 
-expt_name: llama-1b-pytorch
+expt_name: llama-1b-aiter
 name: ${.expt_name}
 
 resume: true
@@ -65,7 +65,7 @@ model:
     reorder_and_upcast_attn: false
     scale_attn_by_inverse_layer_idx: false
 
-    use_aiter_attn: false
+    use_aiter_attn: true
     use_hip_attn: false
 
     

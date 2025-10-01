@@ -12,21 +12,15 @@ from .block import Block
 from .embedding import GPT2Embeddings
 from .mha import MHA
 from .mlp import GatedMlp
-
 from llama.ops.triton.layer_norm import RMSNorm
 
 logger = logging.getLogger(__name__)
-
-
 from .utils.hf import load_config_hf, load_state_dict_hf
 
 class GPT2MixerConfig(GPT2Config):
     def __init__(self, *args, **kwargs):
         self.mixer = kwargs.pop("mixer", None)
         super().__init__(*args, **kwargs)
-
-def create_mixer_cls(config, layer_idx=None, device=None, dtype=None):
-    return create_mha_cls(config, layer_idx, device=device)
 
 def create_mha_cls(config, layer_idx=None, device=None, dtype=None):
     factory_kwargs = {"device": device, "dtype": dtype}
@@ -42,7 +36,8 @@ def create_mha_cls(config, layer_idx=None, device=None, dtype=None):
     rotary_emb_base = getattr(config, "rotary_emb_base", 10000.0)
     rotary_emb_scale_base = getattr(config, "rotary_emb_scale_base", None)
     rotary_emb_interleaved = getattr(config, "rotary_emb_interleaved", False)
-    use_flash_attn = getattr(config, "use_flash_attn", False)
+    use_aiter_attn = getattr(config, "use_aiter_attn", False)
+    use_hip_attn = getattr(config, "use_hip_attn", False)
     fused_bias_fc = getattr(config, "fused_bias_fc", False)
     mha_cls = MHA
     serial_kwargs = (
@@ -63,7 +58,8 @@ def create_mha_cls(config, layer_idx=None, device=None, dtype=None):
         rotary_emb_base=rotary_emb_base,
         rotary_emb_scale_base=rotary_emb_scale_base,
         rotary_emb_interleaved=rotary_emb_interleaved,
-        use_flash_attn=use_flash_attn,
+        use_aiter_attn=use_aiter_attn,
+        use_hip_attn=use_hip_attn,
         **serial_kwargs,
         **factory_kwargs,
     )
@@ -74,15 +70,12 @@ def create_mlp_cls(config, layer_idx=None, device=None, dtype=None):
     factory_kwargs = {"device": device, "dtype": dtype}
     mlp_fc1_bias = getattr(config, "mlp_fc1_bias", True)
     mlp_fc2_bias = getattr(config, "mlp_fc2_bias", True)
-    mlp_type = getattr(config, "mlp_type", 'base')
     mlp_cls = partial(
         GatedMlp,
         hidden_features=config.n_inner,
         activation=F.silu,
         bias1=mlp_fc1_bias,
         bias2=mlp_fc2_bias,
-        mlp_type=mlp_type,
-        ff_mult=getattr(config, "ff_mult", 2),
         **factory_kwargs,
     )   
     return mlp_cls
@@ -90,7 +83,7 @@ def create_mlp_cls(config, layer_idx=None, device=None, dtype=None):
 
 def create_block(config, layer_idx=None, device=None, dtype=None, **kwargs):
     factory_kwargs = {"device": device, "dtype": dtype}
-    mixer_cls = create_mixer_cls(config, layer_idx, **factory_kwargs)
+    mixer_cls = create_mha_cls(config, layer_idx, **factory_kwargs)
     mlp_cls = create_mlp_cls(config, layer_idx, **factory_kwargs)
     use_rms_norm = getattr(config, "rms_norm", False)
     norm_cls = partial(
@@ -142,10 +135,9 @@ class GPTPreTrainedModel(nn.Module):
         config = GPT2Config(**config_data)
         model = cls(config, device=device, **kwargs)
         state_dict = load_state_dict_hf(pretrained_model_name, device=device)
-
         # remove the 'model.' prefix from the keys
         state_dict = {re.sub("^model\.", "", k): v for k, v in state_dict.items()}
-        # remove Unexpected key(s) in state_dict: "train_metrics.num-tokens.count", "val_metrics.num-tokens.count", "test_metrics.num-tokens.count". from the state_dict
+        # remove Unexpected key(s) in state_dict
         state_dict = {k: v for k, v in state_dict.items() if "metrics" not in k}
 
         model.load_state_dict(state_dict)
