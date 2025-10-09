@@ -234,6 +234,7 @@ __global__ void attend_ker(const attn_globals<D> g) {
     col_max(max_vec, att_block[0]);
     sub_col(att_block[0], att_block[0], max_vec);
     exp2(att_block[0], att_block[0]);
+    zero(att_block[1]);
 
     if (stagger) {
         __builtin_amdgcn_sched_barrier(0);
@@ -241,7 +242,6 @@ __global__ void attend_ker(const attn_globals<D> g) {
     }
 
     // All warps then load in the second slice of K (K1)
-    zero(att_block[1]);
     load(k_reg, k_smem[1], lane_offs);
     // All warps then collaboratively load in the third slice of K (K2) into shared memory
     G::load<1, false>(k_smem[0], g.Kg, {batch_idx, 2, head_idx_kv, 0}, swizzled_offsets_K, (uint32_t)ks0, (uint32_t)ks1, (uint32_t)ks2, (uint32_t)ks3, k_base);
@@ -264,6 +264,7 @@ __global__ void attend_ker(const attn_globals<D> g) {
         sub(max_vec_prev, max_vec_prev, max_vec); 
         exp2(max_vec_prev, max_vec_prev);  
         mul(norm_vec, norm_vec, max_vec_prev);
+        col_sum(norm_vec, att_block[0], norm_vec);
         __builtin_amdgcn_sched_barrier(0);
         __builtin_amdgcn_s_barrier();
     
@@ -278,7 +279,6 @@ __global__ void attend_ker(const attn_globals<D> g) {
         __builtin_amdgcn_s_barrier();
     
         // Cluster 2: A0V0
-        col_sum(norm_vec, att_block[0], norm_vec);
         copy(att_block_bf16, att_block[0]);
         mul_col(o_reg, o_reg, max_vec_prev);
         mma_AtB(o_reg, v_reg, att_block_bf16, o_reg);
@@ -298,6 +298,7 @@ __global__ void attend_ker(const attn_globals<D> g) {
     
         // Cluster 3: Loads
         //      Load K2 into registers
+        zero(att_block[0]);
         load(k_reg, k_smem[0], lane_offs);
         //      Load V2 into shared
         G::load<1, false>(v_smem[0], g.Vg, {batch_idx, j - 1, head_idx_kv, 0}, swizzled_offsets_V, (uint32_t)vs0, (uint32_t)vs1, (uint32_t)vs2, (uint32_t)vs3, v_base);
@@ -309,7 +310,6 @@ __global__ void attend_ker(const attn_globals<D> g) {
     
         // Cluster 4: QK2
         __builtin_amdgcn_s_setprio(1);
-        zero(att_block[0]);
         exp2(att_block[1], att_block[1]);
         swap_layout_and_transpose(k_reg_transposed, k_reg);
         mma_AtB(att_block[0], k_reg_transposed, q_reg_transposed, att_block[0]);
@@ -317,7 +317,6 @@ __global__ void attend_ker(const attn_globals<D> g) {
         sub(max_vec_prev, max_vec_prev, max_vec); 
         exp2(max_vec_prev, max_vec_prev);  
         mul(norm_vec, norm_vec, max_vec_prev);
-        col_sum(norm_vec, att_block[1], norm_vec);
         __builtin_amdgcn_s_setprio(0);
         __builtin_amdgcn_sched_barrier(0);
         __builtin_amdgcn_s_barrier();
@@ -334,6 +333,7 @@ __global__ void attend_ker(const attn_globals<D> g) {
         __builtin_amdgcn_s_barrier();
     
         // Cluster 6: A1V1
+        col_sum(norm_vec, att_block[1], norm_vec);
         mul_col(o_reg, o_reg, max_vec_prev);
         copy(att_block_bf16, att_block[1]);
         mma_AtB(o_reg, v_reg, att_block_bf16, o_reg);
