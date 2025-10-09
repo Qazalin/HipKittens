@@ -12,10 +12,30 @@ constexpr int KV_BLOCK_SIZE = 64; // kv block size
 #define NUM_WARPS 8
 #define NUM_THREADS (kittens::WARP_THREADS * NUM_WARPS)
 
+#define MFMA_MASK 0x08
+#define VALU_MASK 0x02
+#define EXP_MASK  0x400
+
 using namespace kittens;
 using _gl_QKVO = gl<bf16, -1, -1, -1, -1>;
 
 using G = kittens::group<NUM_WARPS>;
+
+#define SCHED_BARRIER(mask, cnt, group) __builtin_amdgcn_sched_group_barrier(mask, cnt, group)
+
+template<int Pairs, int VALU_CNT, int Group>
+__device__ __forceinline__ void sched_barrier_pairs() {
+    SCHED_BARRIER(MFMA_MASK, 1, Group);
+    SCHED_BARRIER(VALU_MASK, VALU_CNT, Group);
+    if constexpr (Pairs > 1) sched_barrier_pairs<Pairs - 1, VALU_CNT, Group>();
+}
+
+template<int Pairs, int EXP_CNT, int Group>
+__device__ __forceinline__ void sched_barrier_exp_pairs() {
+    SCHED_BARRIER(MFMA_MASK, 1, Group);
+    SCHED_BARRIER(EXP_MASK, EXP_CNT, Group);
+    if constexpr (Pairs > 1) sched_barrier_exp_pairs<Pairs - 1, EXP_CNT, Group>();
+}
 
 template<int D, typename T=bf16, typename L=row_l, typename S=rt_32x16_s> using qo_tile = rt<T, Q_BLOCK_SIZE, D, L, S>;
 template<int D, typename T=bf16, typename L=col_l, typename S=rt_16x32_s> using qo_tile_transposed = rt<T, D, Q_BLOCK_SIZE, L, S>;
@@ -37,7 +57,7 @@ __global__ void attend_ker(const attn_globals<D> g) {
     extern __shared__ alignment_dummy __shm[];
     shared_allocator al((int*)&__shm[0]);
     st_bf<KV_BLOCK_SIZE, ATTN_D, st_32x32_s> (&k_smem)[2] = al.allocate<st_bf<KV_BLOCK_SIZE, ATTN_D, st_32x32_s>, 2>();
-    st_bf<KV_BLOCK_SIZE, ATTN_D, st_32x32_s> (&v_smem)[2] = al.allocate<st_bf<KV_BLOCK_SIZE, ATTN_D, st_32x32_s>, 2>();
+    st_bf<KV_BLOCK_SIZE, ATTN_D, st_8x32_s> (&v_smem)[2] = al.allocate<st_bf<KV_BLOCK_SIZE, ATTN_D, st_8x32_s>, 2>();
     
     const int head_idx = (blockIdx.x % 8) * 8 + (blockIdx.x / 8);
     // const int head_idx = blockIdx.x;
@@ -142,6 +162,7 @@ __global__ void attend_ker(const attn_globals<D> g) {
         mul(norm_vec, norm_vec, max_vec_prev);
         col_sum(norm_vec, att_block[0], norm_vec);
         copy(att_block_bf16, att_block[0]);
+        sched_barrier_pairs<16, 4, 1>();
         __builtin_amdgcn_sched_barrier(0);
         __builtin_amdgcn_s_barrier();
         __builtin_amdgcn_sched_barrier(0);
@@ -161,6 +182,7 @@ __global__ void attend_ker(const attn_globals<D> g) {
         //      A0V0
         __builtin_amdgcn_s_setprio(1);
         mul_col(o_reg, o_reg, max_vec_prev);
+        __builtin_amdgcn_sched_barrier(0);
         mma_AtB(o_reg, v_reg, att_block_bf16, o_reg);
         //      Partial softmax for QK1
         // mul(att_block[1], att_block[1], TEMPERATURE_SCALE);
@@ -168,6 +190,8 @@ __global__ void attend_ker(const attn_globals<D> g) {
         col_max(max_vec, att_block[1], max_vec);
         sub_col(att_block[1], att_block[1], max_vec);
         exp2(att_block[1], att_block[1]);
+        sched_barrier_pairs<8, 8, 2>();
+        sched_barrier_exp_pairs<8, 4, 2>();
         __builtin_amdgcn_s_setprio(0);
         __builtin_amdgcn_sched_barrier(0);
         __builtin_amdgcn_s_barrier();
@@ -196,6 +220,7 @@ __global__ void attend_ker(const attn_globals<D> g) {
         mul(norm_vec, norm_vec, max_vec_prev);
         col_sum(norm_vec, att_block[1], norm_vec);
         copy(att_block_bf16, att_block[1]);
+        sched_barrier_pairs<16, 4, 3>();
         __builtin_amdgcn_sched_barrier(0);
         __builtin_amdgcn_s_barrier();
         __builtin_amdgcn_sched_barrier(0);
@@ -215,6 +240,7 @@ __global__ void attend_ker(const attn_globals<D> g) {
         //      A1V1
         __builtin_amdgcn_s_setprio(1);
         mul_col(o_reg, o_reg, max_vec_prev);
+        __builtin_amdgcn_sched_barrier(0);
         mma_AtB(o_reg, v_reg, att_block_bf16, o_reg);
         //      Partial softmax for QK2
         // mul(att_block[0], att_block[0], TEMPERATURE_SCALE);
@@ -222,6 +248,8 @@ __global__ void attend_ker(const attn_globals<D> g) {
         col_max(max_vec, att_block[0], max_vec);
         sub_col(att_block[0], att_block[0], max_vec);
         exp2(att_block[0], att_block[0]);
+        sched_barrier_pairs<8, 8, 4>();
+        sched_barrier_exp_pairs<8, 4, 4>();
         __builtin_amdgcn_s_setprio(0);
         __builtin_amdgcn_sched_barrier(0);
         __builtin_amdgcn_s_barrier();
