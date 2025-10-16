@@ -21,7 +21,7 @@ __device__ inline void load(ST& dst, const GL& src, const COORD& idx)
     constexpr int bytes_per_thread = ST::underlying_subtile_bytes_per_thread;
     constexpr int bytes_per_warp = bytes_per_thread * kittens::WARP_THREADS;
     constexpr int memcpy_per_tile = ST::rows * ST::cols * sizeof(T) / (bytes_per_thread * N_THREADS);
-    static_assert(memcpy_per_tile > 0, "memcpy_per_tile must be greater than 0. Please decrease the number of threads.");
+    static_assert(ST::rows * ST::cols * sizeof(T) >= bytes_per_warp, "shared tile must be at least 1024 bytes");
     
     constexpr int num_warps = N_THREADS / kittens::WARP_THREADS;
     const int laneid = kittens::laneid();
@@ -35,34 +35,74 @@ __device__ inline void load(ST& dst, const GL& src, const COORD& idx)
 
     const uintptr_t lds_base = reinterpret_cast<uintptr_t>(&dst.data[0]) + (warpid * bytes_per_warp);
 
-    #pragma unroll
-    for (int i = 0; i < memcpy_per_tile; i++) {
+    if constexpr (memcpy_per_tile > 0) {
 
-        const int lane_byte_offset = (laneid * bytes_per_thread) + (warpid * bytes_per_warp) + (i * num_warps * bytes_per_warp);
-        const int subtile_id = lane_byte_offset / ST::underlying_subtile_bytes;
-        const int subtile_row = subtile_id / ST::underlying_subtiles_per_row;
-        const int subtile_col = subtile_id % ST::underlying_subtiles_per_row;
-        const int subtile_lane_byte_offset = lane_byte_offset % ST::underlying_subtile_bytes;
+        #pragma unroll
+        for (int i = 0; i < memcpy_per_tile; i++) {
 
-        const int row = subtile_lane_byte_offset / ST::underlying_subtile_row_bytes;
-        const int col = (subtile_lane_byte_offset % ST::underlying_subtile_row_bytes) / sizeof(T);
-        const uint32_t swizzled_shared_byte_offset = dst.swizzle({row, col});
+            const int lane_byte_offset = (laneid * bytes_per_thread) + (warpid * bytes_per_warp) + (i * num_warps * bytes_per_warp);
+            const int subtile_id = lane_byte_offset / ST::underlying_subtile_bytes;
+            const int subtile_row = subtile_id / ST::underlying_subtiles_per_row;
+            const int subtile_col = subtile_id % ST::underlying_subtiles_per_row;
+            const int subtile_lane_byte_offset = lane_byte_offset % ST::underlying_subtile_bytes;
 
-        const int swizzled_global_row = (swizzled_shared_byte_offset / ST::underlying_subtile_row_bytes) + subtile_row * ST::underlying_subtile_rows;
-        const int swizzled_global_col = (swizzled_shared_byte_offset % ST::underlying_subtile_row_bytes) / sizeof(T) + subtile_col * ST::underlying_subtile_cols;
-        const uint32_t swizzled_global_byte_offset = (swizzled_global_row * row_stride + swizzled_global_col) * sizeof(T);
+            const int row = subtile_lane_byte_offset / ST::underlying_subtile_row_bytes;
+            const int col = (subtile_lane_byte_offset % ST::underlying_subtile_row_bytes) / sizeof(T);
 
-        uintptr_t lds_addr = lds_base + (i * num_warps * bytes_per_warp);
-        as3_uint32_ptr lds_ptr = (as3_uint32_ptr)(lds_addr);
+            const uint32_t swizzled_shared_byte_offset = dst.swizzle({row, col});
 
-        llvm_amdgcn_raw_buffer_load_lds(
-            srsrc, // buffer resource
-            lds_ptr,
-            bytes_per_thread,
-            swizzled_global_byte_offset,
-            0, 
-            0, // instruction offset
-            static_cast<int>(coherency::cache_all)); // cache coherency
+            const int swizzled_global_row = (swizzled_shared_byte_offset / ST::underlying_subtile_row_bytes) + subtile_row * ST::underlying_subtile_rows;
+            const int swizzled_global_col = (swizzled_shared_byte_offset % ST::underlying_subtile_row_bytes) / sizeof(T) + subtile_col * ST::underlying_subtile_cols;
+            const uint32_t swizzled_global_byte_offset = (swizzled_global_row * row_stride + swizzled_global_col) * sizeof(T);
+
+            uintptr_t lds_addr = lds_base + (i * num_warps * bytes_per_warp);
+            as3_uint32_ptr lds_ptr = (as3_uint32_ptr)(lds_addr);
+
+            llvm_amdgcn_raw_buffer_load_lds(
+                srsrc, // buffer resource
+                lds_ptr,
+                bytes_per_thread,
+                swizzled_global_byte_offset,
+                0, 
+                0, // instruction offset
+                static_cast<int>(coherency::cache_all)); // cache coherency
+        }
+    }
+    // there are leftover loads that need to be handled here
+    if constexpr (memcpy_per_tile * (bytes_per_thread * N_THREADS) != ST::rows * ST::cols * sizeof(T)) {
+
+        constexpr int leftover_bytes = ST::rows * ST::cols * sizeof(T) - memcpy_per_tile * (bytes_per_thread * N_THREADS);
+        constexpr int leftover_threads = leftover_bytes / bytes_per_thread;
+        constexpr int leftover_warps = leftover_threads / kittens::WARP_THREADS;
+
+        if (warpid < leftover_warps) {
+            const int lane_byte_offset = (laneid * bytes_per_thread) + (warpid * bytes_per_warp) + (memcpy_per_tile * num_warps * bytes_per_warp);
+            const int subtile_id = lane_byte_offset / ST::underlying_subtile_bytes;
+            const int subtile_row = subtile_id / ST::underlying_subtiles_per_row;
+            const int subtile_col = subtile_id % ST::underlying_subtiles_per_row;
+            const int subtile_lane_byte_offset = lane_byte_offset % ST::underlying_subtile_bytes;
+
+            const int row = subtile_lane_byte_offset / ST::underlying_subtile_row_bytes;
+            const int col = (subtile_lane_byte_offset % ST::underlying_subtile_row_bytes) / sizeof(T);
+
+            const uint32_t swizzled_shared_byte_offset = dst.swizzle({row, col});
+
+            const int swizzled_global_row = (swizzled_shared_byte_offset / ST::underlying_subtile_row_bytes) + subtile_row * ST::underlying_subtile_rows;
+            const int swizzled_global_col = (swizzled_shared_byte_offset % ST::underlying_subtile_row_bytes) / sizeof(T) + subtile_col * ST::underlying_subtile_cols;
+            const uint32_t swizzled_global_byte_offset = (swizzled_global_row * row_stride + swizzled_global_col) * sizeof(T);
+
+            uintptr_t lds_addr = lds_base + (memcpy_per_tile * num_warps * bytes_per_warp);
+            as3_uint32_ptr lds_ptr = (as3_uint32_ptr)(lds_addr);
+
+            llvm_amdgcn_raw_buffer_load_lds(
+                srsrc, // buffer resource
+                lds_ptr,
+                bytes_per_thread,
+                swizzled_global_byte_offset,
+                0, 
+                0, // instruction offset
+                static_cast<int>(coherency::cache_all)); // cache coherency
+        }
     }
 }
 
@@ -82,7 +122,7 @@ __device__ inline void prefill_swizzled_offsets(
     constexpr int bytes_per_thread = ST::underlying_subtile_bytes_per_thread;
     constexpr int bytes_per_warp = bytes_per_thread * kittens::WARP_THREADS;
     constexpr int memcpy_per_tile =  ST::rows * ST::cols * sizeof(T) / (bytes_per_thread * N_THREADS);
-    static_assert(memcpy_per_tile > 0, "memcpy_per_tile must be greater than 0. Please decrease the number of threads.");
+    static_assert(ST::rows * ST::cols * sizeof(T) >= bytes_per_warp, "shared tile must be at least 1024 bytes");
 
     constexpr int num_warps = N_THREADS / kittens::WARP_THREADS;
     const int laneid = kittens::laneid();
@@ -107,6 +147,33 @@ __device__ inline void prefill_swizzled_offsets(
         const uint32_t swizzled_global_byte_offset = (swizzled_global_row * row_stride + swizzled_global_col) * sizeof(T);
         swizzled_offsets[i] = swizzled_global_byte_offset;
     }
+
+    // there are leftover loads that need to be handled here
+    if constexpr (memcpy_per_tile * (bytes_per_thread * N_THREADS) != ST::rows * ST::cols * sizeof(T)) {
+
+        constexpr int leftover_bytes = ST::rows * ST::cols * sizeof(T) - memcpy_per_tile * (bytes_per_thread * N_THREADS);
+        constexpr int leftover_threads = leftover_bytes / bytes_per_thread;
+        constexpr int leftover_warps = leftover_threads / kittens::WARP_THREADS;
+
+        if (warpid < leftover_warps) {
+            const int lane_byte_offset = (laneid * bytes_per_thread) + (warpid * bytes_per_warp) + (memcpy_per_tile * num_warps * bytes_per_warp);
+            const int subtile_id = lane_byte_offset / ST::underlying_subtile_bytes;
+            const int subtile_row = subtile_id / ST::underlying_subtiles_per_row;
+            const int subtile_col = subtile_id % ST::underlying_subtiles_per_row;
+            const int subtile_lane_byte_offset = lane_byte_offset % ST::underlying_subtile_bytes;
+
+            const int row = subtile_lane_byte_offset / ST::underlying_subtile_row_bytes;
+            const int col = (subtile_lane_byte_offset % ST::underlying_subtile_row_bytes) / sizeof(T);
+
+            const uint32_t swizzled_shared_byte_offset = dst.swizzle({row, col});
+
+            const int swizzled_global_row = (swizzled_shared_byte_offset / ST::underlying_subtile_row_bytes) + subtile_row * ST::underlying_subtile_rows;
+            const int swizzled_global_col = (swizzled_shared_byte_offset % ST::underlying_subtile_row_bytes) / sizeof(T) + subtile_col * ST::underlying_subtile_cols;
+            const uint32_t swizzled_global_byte_offset = (swizzled_global_row * row_stride + swizzled_global_col) * sizeof(T);
+
+            swizzled_offsets[memcpy_per_tile] = swizzled_global_byte_offset;
+        }
+    }
 }
 
 template<int axis, bool assume_aligned,
@@ -120,7 +187,7 @@ __device__ inline void load(ST& dst, const GL& src, const COORD& idx, const uint
     constexpr int bytes_per_thread = ST::underlying_subtile_bytes_per_thread;
     constexpr int bytes_per_warp = bytes_per_thread * kittens::WARP_THREADS;
     constexpr int memcpy_per_tile = ST::rows * ST::cols * sizeof(T) / (bytes_per_thread * N_THREADS);
-    static_assert(memcpy_per_tile > 0, "memcpy_per_tile must be greater than 0. Please decrease the number of threads.");
+    static_assert(ST::rows * ST::cols * sizeof(T) >= bytes_per_warp, "shared tile must be at least 1024 bytes");
     
     constexpr int num_warps = N_THREADS / kittens::WARP_THREADS;
     const int laneid = kittens::laneid();
@@ -147,6 +214,35 @@ __device__ inline void load(ST& dst, const GL& src, const COORD& idx, const uint
             0, 
             0, // instruction offset
             static_cast<int>(coherency::cache_all)); // cache coherency
+    }
+
+    // there are leftover loads that need to be handled here
+    if constexpr (memcpy_per_tile * (bytes_per_thread * N_THREADS) != ST::rows * ST::cols * sizeof(T)) {
+
+        constexpr int leftover_bytes = ST::rows * ST::cols * sizeof(T) - memcpy_per_tile * (bytes_per_thread * N_THREADS);
+        constexpr int leftover_threads = leftover_bytes / bytes_per_thread;
+        constexpr int leftover_warps = leftover_threads / kittens::WARP_THREADS;
+
+        if (warpid < leftover_warps) {
+
+            uintptr_t lds_addr = lds_base + (memcpy_per_tile * num_warps * bytes_per_warp);
+            as3_uint32_ptr lds_ptr = (as3_uint32_ptr)(lds_addr);
+
+            if (threadIdx.x == 64) {
+                printf("swizzled_offsets[memcpy_per_tile]: %d\n", swizzled_offsets[memcpy_per_tile]);
+                printf("lds_addr: %d\n", lds_addr);
+                printf("warpid: %d\n", warpid);
+            }
+
+            llvm_amdgcn_raw_buffer_load_lds(
+                srsrc, // buffer resource
+                lds_ptr,
+                bytes_per_thread,
+                swizzled_offsets[memcpy_per_tile],
+                0, 
+                0, // instruction offset
+                static_cast<int>(coherency::cache_all)); // cache coherency
+        }
     }
 }
 
