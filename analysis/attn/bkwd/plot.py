@@ -13,11 +13,11 @@ mi355x_mha_baselines_causal = {
         "16384": 251,
     },
     "ck": {
-        "1024": 372.36,
-        "2048": 622.46,
-        "4096": 800.12,
-        "8192": 870.58,
-        "16384": 986.59,
+        "1024": 517.46,
+        "2048": 749.49,
+        "4096": 911.59,
+        "8192": 961.69,
+        "16384": 1080.52,
     },
     "torch": {
         "1024": 109.51,
@@ -37,11 +37,11 @@ mi350x_mha_baselines_causal = {
         "16384": 206.924580,
     },
     "ck": {
-        "1024": 350.65,
-        "2048": 579.85,
-        "4096": 728.33,
-        "8192": 813.47,
-        "16384": 886.17,
+        "1024": 489.78,
+        "2048": 698.71,
+        "4096": 798.36,
+        "8192": 868.01,
+        "16384": 927.37,
     },
     "torch": {
         "1024": 103.58,
@@ -55,11 +55,11 @@ mi350x_mha_baselines_causal = {
 mi355x_mha_baselines_non_causal = { 
     # triton not available for non-causal bwd attn
     "ck": {
-        "1024": 348.60,
-        "2048": 415.37,
-        "4096": 437.66,
-        "8192": 465.44,
-        "16384": 465.83,
+        "1024": 365.47,
+        "2048": 427.98,
+        "4096": 447.64,
+        "8192": 469.74,
+        "16384": 470.02,
     },
     "torch": {
         "1024": 220.27,
@@ -73,11 +73,11 @@ mi355x_mha_baselines_non_causal = {
 mi350x_mha_baselines_non_causal = { 
     # triton not available for non-causal bwd attn
     "ck": {
-        "1024": 331.73,
-        "2048": 391.71,
-        "4096": 412.22,
-        "8192": 434.40,
-        "16384": 443.33,
+        "1024": 344.08,
+        "2048": 404.38,
+        "4096": 419.94,
+        "8192": 445.81,
+        "16384": 446.31,
     },
     "torch": {
         "1024": 207.01,
@@ -92,11 +92,11 @@ mi350x_mha_baselines_non_causal = {
 mi355x_gqa_baselines_causal = {
     # triton not available for gqa bwd attn
     "ck": {
-        "1024": 449.97,
-        "2048": 707.80,
-        "4096": 829.07,
-        "8192": 894.56,
-        "16384": 991.03,
+        "1024": 543.11,
+        "2048": 810.94,
+        "4096": 945.84,
+        "8192": 977.65,
+        "16384": 1079.00,
     },
     "torch": {
         "1024": 109.51,
@@ -110,11 +110,11 @@ mi355x_gqa_baselines_causal = {
 mi350x_gqa_baselines_causal = {
     # triton not available for gqa bwd attn
     "ck": {
-        "1024": 420.40,
-        "2048": 661.89,
-        "4096": 754.86,
-        "8192": 829.72,
-        "16384": 905.81,
+        "1024": 510.38,
+        "2048": 746.08,
+        "4096": 819.23,
+        "8192": 879.51,
+        "16384": 911.87,
     },
     "torch": {
         "1024": 103.58,
@@ -128,11 +128,11 @@ mi350x_gqa_baselines_causal = {
 mi355x_gqa_baselines_non_causal = {
     # triton not available for gqa bwd attn
     "ck": {
-        "1024": 352.54,
-        "2048": 418.05,
-        "4096": 438.59,
-        "8192": 458.98,
-        "16384": 462.01,
+        "1024": 368.51,
+        "2048": 428.20,
+        "4096": 445.61,
+        "8192": 464.20,
+        "16384": 467.18,
     },
     "torch": {
         "1024": 220.27,
@@ -146,11 +146,11 @@ mi355x_gqa_baselines_non_causal = {
 mi350x_gqa_baselines_non_causal = {
     # triton not available for gqa bwd attn
     "ck": {
-        "1024": 334.65,
-        "2048": 391.00,
-        "4096": 416.55,
-        "8192": 431.70,
-        "16384": 437.35,
+        "1024": 348.40,
+        "2048": 403.89,
+        "4096": 418.79,
+        "8192": 434.00,
+        "16384": 439.18,
     },
     "torch": {
         "1024": 207.01,
@@ -270,7 +270,7 @@ for device in ['mi350x', 'mi355x']:
             bars3 = ax.bar(first_bar_start, torch_vals, width, label='PyTorch SDPA', color=colors[1])
             bars2 = ax.bar(second_bar_start, triton_vals, width, label='Triton', color=colors[2])
             bars4 = ax.bar(third_bar_start, ck_vals, width, label='Composable Kernel', color=colors[4])
-            bars0 = ax.bar(fourth_bar_start, aiter_tflops, width, label='AITER', color=colors[0])
+            bars0 = ax.bar(fourth_bar_start, aiter_tflops, width, label='AITER (ASM)', color=colors[0])
             bars1 = ax.bar(fifth_bar_start, tk_tflops, width, label='HipKittens', color=colors[3])
         else:
             # 4 bars: PyTorch, CK, AITER, HipKittens
