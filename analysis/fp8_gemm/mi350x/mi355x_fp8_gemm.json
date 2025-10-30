@@ -1,32 +1,32 @@
 {
     "1024": {
-        "avg_time_hipblaslt": 0.008005,
-        "tflops_hipblaslt": 268.268,
-        "avg_time": 0.007,
-        "tflops": 319.87
+        "avg_time_hipblaslt": 0.01048,
+        "tflops_hipblaslt": 204.913,
+        "avg_time": 0.008,
+        "tflops": 270.13
     },
     "2048": {
-        "avg_time_hipblaslt": 0.016047,
-        "tflops_hipblaslt": 1070.6,
-        "avg_time": 0.013,
-        "tflops": 1322.91
+        "avg_time_hipblaslt": 0.01465,
+        "tflops_hipblaslt": 1172.69,
+        "avg_time": 0.016,
+        "tflops": 1054.23
     },
     "4096": {
-        "avg_time_hipblaslt": 0.049429,
-        "tflops_hipblaslt": 2780.53,
+        "avg_time_hipblaslt": 0.050,
+        "tflops_hipblaslt": 2748.78,
         "avg_time": 0.050,
-        "tflops": 2768.34
+        "tflops": 2741.41
     },
     "8192": {
-        "avg_time_hipblaslt": 0.33631,
-        "tflops_hipblaslt": 3269.34,
-        "avg_time": 0.333,
-        "tflops": 3297.30
+        "avg_time_hipblaslt": 0.34007,
+        "tflops_hipblaslt": 3233.19,
+        "avg_time": 0.330,
+        "tflops": 3327.46
     },
     "16384": {
-        "avg_time_hipblaslt": 2.65891,
-        "tflops_hipblaslt": 3308.16,
-        "avg_time": 2.639,
-        "tflops": 3332.86
+        "avg_time_hipblaslt": 2.67096,
+        "tflops_hipblaslt": 3293.23,
+        "avg_time": 2.604,
+        "tflops": 3377.75
     }
 }

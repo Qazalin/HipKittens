@@ -67,12 +67,9 @@ for device in ['mi350x', 'mi355x']:
     width = 0.28
 
     fig, ax = plt.subplots(figsize=(10, 6))
-    first_bar = x - 3*width
-    second_bar = x - 2*width
-    third_bar = x - width
-    fourth_bar = x
-    fifth_bar = x + width
-    sixth_bar = x + 2*width
+    first_bar = x - width
+    second_bar = x
+    third_bar = x + width
     bars2 = ax.bar(second_bar, hipblaslt_vals, width, label='HipblasLT', color=color_map["hipblaslt"])
     bars3 = ax.bar(third_bar, tk_vals, width, label='HipKittens', color=color_map["hipkittens"])
     bars5 = ax.bar(first_bar, ck_vals, width, label='Composable Kernel', color=color_map["composable_kernel"])
@@ -84,16 +81,16 @@ for device in ['mi350x', 'mi355x']:
     fontsize = 13
 
     for idx in hipblaslt_oom:
-        ax.plot(x[idx] - 2*width, oom_height, 'x', color=color_map["hipblaslt"], markersize=markersize, markeredgewidth=markeredgewidth)
-        ax.text(x[idx] - 2*width, oom_height + max_tflops * 0.03, 'OOM', ha='center', va='bottom', fontsize=fontsize, color=color_map["hipblaslt"])
+        ax.plot(x[idx] - width, oom_height, 'x', color=color_map["hipblaslt"], markersize=markersize, markeredgewidth=markeredgewidth)
+        ax.text(x[idx] - width, oom_height + max_tflops * 0.03, 'OOM', ha='center', va='bottom', fontsize=fontsize, color=color_map["hipblaslt"])
 
     for idx in tk_oom:
         ax.plot(x[idx], oom_height, 'x', color=color_map["hipkittens"], markersize=markersize, markeredgewidth=markeredgewidth)
         ax.text(x[idx], oom_height + max_tflops * 0.03, 'OOM', ha='center', va='bottom', fontsize=fontsize, color=color_map["hipkittens"])
 
     for idx in ck_oom:
-        ax.plot(x[idx] - 3*width, oom_height, 'x', color=color_map["composable_kernel"], markersize=markersize, markeredgewidth=markeredgewidth)
-        ax.text(x[idx] - 3*width, oom_height + max_tflops * 0.03, 'OOM', ha='center', va='bottom', fontsize=fontsize, color=color_map["composable_kernel"])
+        ax.plot(x[idx] - width, oom_height, 'x', color=color_map["composable_kernel"], markersize=markersize, markeredgewidth=markeredgewidth)
+        ax.text(x[idx] - width, oom_height + max_tflops * 0.03, 'OOM', ha='center', va='bottom', fontsize=fontsize, color=color_map["composable_kernel"])
 
     # Add value labels on bars
     for bar, value in zip(bars2, hipblaslt_vals):
