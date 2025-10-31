@@ -46,6 +46,7 @@ def create_mha_cls(config, layer_idx=None, device=None, dtype=None):
     num_heads_kv = getattr(config, "n_head_kv", None)
     mixer_cls = partial(
         mha_cls,
+        head_dim=head_dim,
         num_heads=config.num_attention_heads,
         num_heads_kv=num_heads_kv,
         qkv_proj_bias=qkv_proj_bias,

@@ -42,8 +42,9 @@ datamodule:
 model:
   config:
     n_embd: 2048
+    head_dim: 128
     n_head: 16
-    n_head_kv: 8
+    n_head_kv: 16
     n_layer: 6
     _target_: "transformers.GPT2Config"
     rms_norm: true

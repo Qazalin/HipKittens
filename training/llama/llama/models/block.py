@@ -29,9 +29,7 @@ class Block(nn.Module):
         drop_path1=0.0,
         drop_path2=0.0,
         fused_dropout_add_ln=False,
-        return_residual=False,
         residual_in_fp32=False,
-        sequence_parallel=False,
         mark_shared_params=False,
         layer_idx=None,
         **kwargs,
@@ -48,23 +46,14 @@ class Block(nn.Module):
 
         For prenorm=False, this Block has the same structure as a regular postnorm Transformer
         block: MHA -> Dropout -> Add -> LN -> MLP -> Dropout -> Add -> LN.
-
-        return_residual: whether each of the sub-layers (mixer and mlp) will return the residual.
-        This is for performance reason: for post-norm architecture, returning the input allows us
-        to fuse the backward of nn.Linear with the residual connection.
         """
         super().__init__()
 
         self.prenorm = prenorm
         self.fused_dropout_add_ln = False 
-        self.return_residual = return_residual
         self.residual_in_fp32 = residual_in_fp32
         if self.residual_in_fp32:
             assert self.prenorm, "residual_in_fp32 is only compatible with prenorm=True"
-        if mixer_cls is None:
-            mixer_cls = partial(MHA, num_heads=dim // 64)
-        if mlp_cls is None:
-            mlp_cls = partial(Mlp, hidden_features=4 * dim)
         self.mixer = mixer_cls(dim)
         self.dropout1 = dropout_cls(resid_dropout1)
         self.drop_path1 = StochasticDepth(drop_path1, mode="row")
@@ -76,19 +65,6 @@ class Block(nn.Module):
             self.norm2 = norm_cls(dim)
         self.layer_idx = layer_idx
 
-        # TD [2023-01-07]: TODO: During training, if sequence_parallel is False and dropout != 0.0,
-        # then the input to each worker in the tensor parallel group will be different.
-        # This would produce wrong outputs? Somehow we'd need to sync the RNG state across workers.
-        # For now this is not an issue because we always use sequence_parallel=True during training
-        # and only use sequence_parallel=False during inference.
-
-        # Mark the norm parameters as "sequence_parallel" so that we run all-reduce on their grads.
-        if sequence_parallel:
-            for p in self.norm1.parameters():
-                p._sequence_parallel = True
-            if hasattr(self, "norm2"):
-                for p in self.norm2.parameters():
-                    p._sequence_parallel = True
         # Mark the norm parameters as "shared_params" so that we sync their values at init.
         if mark_shared_params:
             for p in self.norm1.parameters():

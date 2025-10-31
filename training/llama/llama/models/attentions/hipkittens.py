@@ -2,8 +2,9 @@ import torch
 import torch.nn as nn
 from torch.autograd import Function
 
-import llama.models.attentions.tk_fwd_causal_kernel as tk_fwd_causal_kernel
-import llama.models.attentions.tk_kernel_causal_bkwd as tk_kernel_causal_bkwd
+import llama.models.attentions.tk_kernel_fwd as tk_kernel_fwd
+import llama.models.attentions.tk_kernel_bkwd as tk_kernel_bkwd
+import llama.models.attentions.tk_kernel_bkwd_prep as tk_kernel_bkwd_prep
 
 class HipAttnFunction(Function):
     """
@@ -47,7 +48,7 @@ class HipAttnFunction(Function):
         assert O.dtype == torch.bfloat16 and L.dtype == torch.float32, "Output tensor dtypes incorrect"
 
         # Safely dispatch forward kernel with error handling
-        tk_fwd_causal_kernel.dispatch_fwd(q, k, v, O, L)
+        tk_kernel_fwd.dispatch_fwd(q, k, v, O, L)
 
         if O.isnan().any():
             print("O is nan")
@@ -106,9 +107,9 @@ class HipAttnFunction(Function):
             breakpoint()
 
         # Backward kernels
-        tk_kernel_causal_bkwd.dispatch_prep(O, dO, delta)
-        tk_kernel_causal_bkwd.dispatch_bwd_combined(q, k, v, O, dO, dQ_in, dK, dV, L, delta)
-        tk_kernel_causal_bkwd.dispatch_dq_shuffle(dQ_in, dQ)
+        tk_kernel_bkwd_prep.dispatch_prep(O, dO, delta)
+        tk_kernel_bkwd.dispatch_bwd_combined(q, k, v, dO, dQ_in, dK, dV, L, delta)
+        tk_kernel_bkwd_prep.dispatch_dq_shuffle(dQ_in, dQ)
 
         # Final validation before returning
         assert dQ.shape == (B, N, H, D), f"Final dQ shape mismatch: expected ({B}, {N}, {H}, {D}), got {dQ.shape}"

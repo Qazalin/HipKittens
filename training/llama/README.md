@@ -1,23 +1,32 @@
 
 ## Llama 1B training
 
-### Setup commands 
+### Setting up environment 
 
 ```python
-# install train extra dependencies
+pip install -e .
 pip install -e .[train]
 ```
 
-We breakdown this section into three parts: 1) how to set up a training config and launch; 2) how to set up fast training kernels, and 3) how to install extra optimizations for training.
+### Installing kernels
+
+```bash
+cd HipKittens/
+source env.src
+cd HipKittens/training/llama/csrc/
+bash setup_kernels.sh
+```
 
 ### Launching training
+
 To train a new model, construct a config.yaml file at ```train/configs/experiment/```. You can launch using the following script:
-```
-cd train/
+```bash
+cd HipKittens/training/llama/
 CUDA_VISIBLE_DEVICES=0 python train/run.py experiment=example/llama-1b trainer.devices=1        # pytorch
-CUDA_VISIBLE_DEVICES=1 python train/run.py experiment=example/llama-1b-aiter trainer.devices=1  # aiter
+CUDA_VISIBLE_DEVICES=1 python train/run.py experiment=example/llama-1b-aiter trainer.devices=1  # aiter (export USE_ROCM_AITER_ROPE_BACKEND=0)
 CUDA_VISIBLE_DEVICES=3 python train/run.py experiment=example/llama-1b-hk trainer.devices=1     # hip
 ```
+
 
 
 

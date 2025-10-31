@@ -8,17 +8,9 @@ try:
 except ImportError:
     RotaryEmbedding = None
 
-
 from .attentions.base import SelfAttention, CrossAttention
 from .attentions.aiter import AITERSelfAttention, AITERCrossAttention
 from .attentions.hipkittens import HipSelfAttention, HipCrossAttention
-
-
-class LinearResidual(nn.Linear):
-    """Wrap nn.Linear to return the residual as well. For compatibility with FusedDense."""
-
-    def forward(self, input: torch.Tensor) -> torch.Tensor:
-        return super().forward(input), input
 
 
 def _update_kv_cache(kv, inference_params, layer_idx):
@@ -57,6 +49,7 @@ class MHA(nn.Module):
         self,
         embed_dim,
         num_heads,
+        head_dim=None,
         num_heads_kv=None,
         qkv_proj_bias=True,
         out_proj_bias=True,
@@ -71,8 +64,6 @@ class MHA(nn.Module):
         fused_bias_fc=False,
         use_aiter_attn=False,
         use_hip_attn=False,
-        return_residual=False,
-        checkpointing=False,
         device=None,
         dtype=None,
         **kwargs,
@@ -89,8 +80,6 @@ class MHA(nn.Module):
         self.causal = causal
         self.layer_idx = layer_idx
         self.rotary_emb_dim = rotary_emb_dim
-        self.return_residual = return_residual
-        self.checkpointing = checkpointing
 
         self.num_heads = num_heads
         self.num_heads_kv = num_heads_kv if num_heads_kv is not None else num_heads
@@ -98,7 +87,10 @@ class MHA(nn.Module):
             self.num_heads % self.num_heads_kv == 0
         ), "num_heads must be divisible by num_heads_kv"
         assert self.embed_dim % num_heads == 0, "embed_dim must be divisible by num_heads"
-        self.head_dim = self.embed_dim // num_heads
+        if not head_dim: 
+            self.head_dim = self.embed_dim // num_heads
+        else:
+            self.head_dim = head_dim
         qkv_dim = self.head_dim * (self.num_heads + 2 * self.num_heads_kv)
         kv_dim = 2 * self.head_dim * self.num_heads_kv
 
@@ -112,9 +104,6 @@ class MHA(nn.Module):
                 device=device,
             )
 
-        linear_cls = nn.Linear
-        linear_resid_cls = (LinearResidual)
-        wqkv_cls = linear_cls if not self.return_residual else linear_resid_cls
         inner_attn_cls = None
         if use_aiter_attn:
             inner_attn_cls = AITERSelfAttention
@@ -122,7 +111,6 @@ class MHA(nn.Module):
             inner_attn_cls = HipSelfAttention
         else:
             inner_attn_cls = SelfAttention
-
 
         inner_cross_attn_cls = None
         if use_aiter_attn:
@@ -132,7 +120,12 @@ class MHA(nn.Module):
         else:
             inner_cross_attn_cls = CrossAttention
 
-        self.Wqkv = wqkv_cls(embed_dim, qkv_dim, bias=qkv_proj_bias, **factory_kwargs)
+        self.Wqkv = nn.Linear(
+            embed_dim, 
+            qkv_dim, 
+            bias=qkv_proj_bias, 
+            **factory_kwargs
+        )
         self.inner_attn = inner_attn_cls(
             causal=causal,
             softmax_scale=softmax_scale,
@@ -143,8 +136,12 @@ class MHA(nn.Module):
             softmax_scale=softmax_scale, 
             attention_dropout=dropout
         )
-        
-        self.out_proj = linear_cls(embed_dim, embed_dim, bias=out_proj_bias, **factory_kwargs)
+        self.out_proj = nn.Linear(
+            embed_dim, 
+            embed_dim, 
+            bias=out_proj_bias, 
+            **factory_kwargs
+        )
 
     def allocate_inference_cache(self, batch_size, max_seqlen, dtype=None):
         dtype = self.out_proj.weight.dtype if dtype is None else dtype
@@ -175,7 +172,6 @@ class MHA(nn.Module):
         x,
         x_kv=None,
         key_padding_mask=None,
-        cu_seqlens=None,
         max_seqlen=None,
         mixer_subset=None,
         inference_params=None,
@@ -184,12 +180,9 @@ class MHA(nn.Module):
         """
         Arguments:
             x: (batch, seqlen, hidden_dim) (where hidden_dim = num heads * head dim) if
-                cu_seqlens is None and max_seqlen is None, else (total, hidden_dim) where total
+                max_seqlen is None, else (total, hidden_dim) where total
                 is the is the sum of the sequence lengths in the batch.
             x_kv: (batch, seqlen, hidden_dim), only applicable for cross-attention. If None, use x.
-            cu_seqlens: (batch_size + 1,), dtype torch.int32. The cumulative sequence lengths
-                of the sequences in the batch, used to index into x. Only applicable when using
-                FlashAttention.
             max_seqlen: int. Maximum sequence length in the batch.
             key_padding_mask: boolean mask, True means to keep, False means to mask out.
                 (batch, seqlen). Only applicable when not using FlashAttention.
@@ -199,16 +192,12 @@ class MHA(nn.Module):
             inference_params: for generation. Adapted from Megatron-LM (and Apex)
             https://github.com/NVIDIA/apex/blob/3ff1a10f72ec07067c4e44759442329804ac5162/apex/transformer/testing/standalone_transformer_lm.py#L470
         """
-        if cu_seqlens is not None:
-            assert max_seqlen is not None
-            assert key_padding_mask is None
-            assert self.rotary_emb_dim == 0
         if key_padding_mask is not None:
-            assert cu_seqlens is None
             assert max_seqlen is None
+            assert self.rotary_emb_dim == 0
         if inference_params is not None:
             assert key_padding_mask is None
-            assert cu_seqlens is None and max_seqlen is None
+            assert max_seqlen is None
 
         kwargs = ( {"key_padding_mask": key_padding_mask, **kwargs} )
         seqlen_offset = (
@@ -223,20 +212,14 @@ class MHA(nn.Module):
         rotary_max_seqlen = inference_params.max_seqlen if inference_params is not None else None
         if self.num_heads_kv == self.num_heads:
             assert x_kv is None and mixer_subset is None
-            if not self.return_residual:
-                qkv = self.Wqkv(x)
-            else:
-                qkv, x = self.Wqkv(x)
+            qkv = self.Wqkv(x)
             qkv = rearrange(qkv, "... (three h d) -> ... three h d", three=3, d=self.head_dim)
             if self.rotary_emb_dim > 0:
                 qkv = self.rotary_emb(
                     qkv, seqlen_offset=seqlen_offset, max_seqlen=rotary_max_seqlen
                 )
             if inference_params is None:
-                if not self.checkpointing:
-                    context = self.inner_attn(qkv, **kwargs)
-                else:
-                    context = torch.utils.checkpoint.checkpoint(self.inner_attn, qkv, **kwargs)
+                context = self.inner_attn(qkv, **kwargs)
             else:
                 context = self._update_kvcache_attention(
                     qkv[:, :, 0], qkv[:, :, 1:], inference_params
@@ -244,10 +227,7 @@ class MHA(nn.Module):
         else:
             
             assert self.num_heads_kv != self.num_heads
-            if not self.return_residual:
-                qkv = self.Wqkv(x)
-            else:
-                qkv, x = self.Wqkv(x)
+            qkv = self.Wqkv(x)
             q = qkv[..., : self.num_heads * self.head_dim]
             kv = qkv[..., self.num_heads * self.head_dim :]
             q = rearrange(q, "... (h d) -> ... h d", d=self.head_dim)
@@ -258,14 +238,14 @@ class MHA(nn.Module):
                     q, kv, seqlen_offset=seqlen_offset, max_seqlen=rotary_max_seqlen
                 )
             if inference_params is None:
-                if not self.checkpointing:
-                    context = self.inner_cross_attn(q, kv, **kwargs)
-                else:
-                    context = torch.utils.checkpoint.checkpoint(
-                        self.inner_cross_attn, q, kv, **kwargs
-                    )
+                context = self.inner_cross_attn(q, kv, **kwargs)
             else:
                 context = self._update_kvcache_attention(q, kv, inference_params)
-        out = self.out_proj(rearrange(context, "... h d -> ... (h d)"))
-        return out if not self.return_residual else (out, x)
+        try:
+            out = self.out_proj(rearrange(context, "... h d -> ... (h d)"))
+        except Exception as e:
+            print(f"Self.layer_idx: {self.layer_idx}")
+            breakpoint()
+            raise e
+        return out
 
