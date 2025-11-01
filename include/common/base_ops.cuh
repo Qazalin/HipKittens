@@ -31,15 +31,15 @@ struct zero {
     template<typename T, typename... args> __device__ static inline constexpr T op(args... _) { return base_types::constants<T>::zero();      }
 };
 /**
- * @brief Represents the one constant operation.
+ * @brief Represents the ones constant operation.
  *
- * This operation returns the one value of the specified type.
+ * This operation returns the ones value of the specified type.
  *
- * @tparam T The data type for which to return the one value.
- * @return The one value of type T.
+ * @tparam T The data type for which to return the ones value.
+ * @return The ones value of type T.
  */
-struct one {
-    template<typename T, typename... args> __device__ static inline constexpr T op(args... _) { return base_types::constants<T>::one();       }
+struct ones {
+    template<typename T, typename... args> __device__ static inline constexpr T op(args... _) { return base_types::constants<T>::ones();       }
 };
 /**
  * @brief Represents the positive infinity constant operation.

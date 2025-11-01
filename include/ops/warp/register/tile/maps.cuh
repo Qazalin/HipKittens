@@ -376,14 +376,14 @@ __device__ static inline void zero(T &dst) {
     unary_map<base_ops::zero, T>(dst, dst);
 }
 /**
- * @brief Sets all elements of a tile to one.
+ * @brief Sets all elements of a tile to ones.
  *
  * @tparam T Tile type.
  * @param dst[out] Destination tile where the result is stored.
  */
 template<ducks::rt::all T>
-__device__ static inline void one(T &dst) {
-    unary_map<base_ops::one, T>(dst, dst);
+__device__ static inline void ones(T &dst) {
+    unary_map<base_ops::ones, T>(dst, dst);
 }
 /**
  * @brief Sets all elements of a tile to positive infinity.

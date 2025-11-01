@@ -70,10 +70,10 @@ template<typename T> struct constants {
      */
     static __device__ inline constexpr T zero()      { return T{0}; }
     /**
-     * @brief One
-     * @return Constexpr one with type T
+     * @brief Ones
+     * @return Constexpr ones with type T
      */
-    static __device__ inline constexpr T one()       { return T{1}; }
+    static __device__ inline constexpr T ones()       { return T{1}; }
     /**
      * @brief Positive infinity. Particularly useful for initializing before a min op.
      * @return Constexpr positive infinity with type T
@@ -87,42 +87,42 @@ template<typename T> struct constants {
 };
 template<> struct constants<float2> {
     static __device__ inline constexpr float2 zero()      { return float2{0.f, 0.f}; }
-    static __device__ inline constexpr float2 one()       { return float2{1.f, 1.f}; }
+    static __device__ inline constexpr float2 ones()       { return float2{1.f, 1.f}; }
     static __device__ inline constexpr float2 pos_infty() { return float2{constants<float>::pos_infty(), constants<float>::pos_infty()}; }
     static __device__ inline constexpr float2 neg_infty() { return float2{constants<float>::neg_infty(), constants<float>::neg_infty()}; }
 };
 template<> struct constants<bf16> {
     static __device__ inline constexpr bf16 zero()      { return std::bit_cast<bf16>(uint16_t(0x0000)); } // unfortunately __float2bf16_rn is not constexpr
-    static __device__ inline constexpr bf16 one()       { return std::bit_cast<bf16>(uint16_t(0x3F80)); }
+    static __device__ inline constexpr bf16 ones()       { return std::bit_cast<bf16>(uint16_t(0x3F80)); }
     static __device__ inline constexpr bf16 pos_infty() { return std::bit_cast<bf16>(uint16_t(0x7F80)); }
     static __device__ inline constexpr bf16 neg_infty() { return std::bit_cast<bf16>(uint16_t(0xFF80)); }
 };
 template<> struct constants<bf16_2> {
     static __device__ inline bf16_2 zero()      { return bf16_2{constants<bf16>::zero(),      constants<bf16>::zero()};      }
-    static __device__ inline bf16_2 one()       { return bf16_2{constants<bf16>::one(),       constants<bf16>::one()};       }
+    static __device__ inline bf16_2 ones()       { return bf16_2{constants<bf16>::ones(),       constants<bf16>::ones()};       }
     static __device__ inline bf16_2 pos_infty() { return bf16_2{constants<bf16>::pos_infty(), constants<bf16>::pos_infty()}; }
     static __device__ inline bf16_2 neg_infty() { return bf16_2{constants<bf16>::neg_infty(), constants<bf16>::neg_infty()}; }
 };
 template<> struct constants<half> {
     static __device__ inline constexpr half zero()      { return std::bit_cast<half>(uint16_t(0x0000)); }
-    static __device__ inline constexpr half one()       { return std::bit_cast<half>(uint16_t(0x3C00)); }
+    static __device__ inline constexpr half ones()       { return std::bit_cast<half>(uint16_t(0x3C00)); }
     static __device__ inline constexpr half pos_infty() { return std::bit_cast<half>(uint16_t(0x7C00)); }
     static __device__ inline constexpr half neg_infty() { return std::bit_cast<half>(uint16_t(0xFC00)); }
 };
 template<> struct constants<half_2> {
     static __device__ inline constexpr half_2 zero()      { return std::bit_cast<half_2>(uint32_t(0x00000000)); }
-    static __device__ inline constexpr half_2 one()       { return std::bit_cast<half_2>(uint32_t(0x3C003C00)); }
+    static __device__ inline constexpr half_2 ones()       { return std::bit_cast<half_2>(uint32_t(0x3C003C00)); }
     static __device__ inline constexpr half_2 pos_infty() { return std::bit_cast<half_2>(uint32_t(0x7C007C00)); }
     static __device__ inline constexpr half_2 neg_infty() { return std::bit_cast<half_2>(uint32_t(0xFC00FC00)); }
 };
 
 template<> struct constants<int> {
     static __device__ inline constexpr int zero()      { return 0; }
-    static __device__ inline constexpr int one()       { return 1; }
+    static __device__ inline constexpr int ones()       { return 1; }
 };
 template<> struct constants<int2> {
     static __device__ inline constexpr int2 zero()      { return int2{0, 0}; }
-    static __device__ inline constexpr int2 one()       { return int2{1, 1}; }
+    static __device__ inline constexpr int2 ones()       { return int2{1, 1}; }
 };
 
 /**
