@@ -115,7 +115,12 @@ __device__ static inline void transpose(rt<T2, _cols, _rows, typename ducks::rt_
         for (int j = 0; j < tile.width; j++) {
             #pragma unroll
             for (int k = 0; k < tile.packed_per_base_tile; k++) {
-                result.tiles[j][i].data[k] = tile.tiles[i][j].data[k];
+                // result.tiles[j][i].data[k] = tile.tiles[i][j].data[k];
+
+                // This generates fewer v_bfi_b32 under AMD beta docker.
+                __builtin_memcpy(&result.tiles[j][i].data[k],
+                    &tile.tiles[i][j].data[k],
+                    sizeof(tile.tiles[i][j].data[k]));
             }
         }
     }

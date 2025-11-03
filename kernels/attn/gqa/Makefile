@@ -7,8 +7,8 @@ TARGET=tk_kernel
 ATTN_B ?= 16
 ATTN_H ?= 64
 ATTN_H_KV ?= 8
-ATTN_N ?= 4096
-ATTN_D ?= 64
+ATTN_N ?= 2048
+ATTN_D ?= 128
 
 # if attention d is 64 use kernel.cpp else use kernel_64.cpp
 ifeq ($(ATTN_D),64)
