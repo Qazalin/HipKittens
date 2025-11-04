@@ -2,16 +2,27 @@
 GPU_TARGET=CDNA4
 
 TARGET=tk_kernel
-SRC=micro_02_2stage_8c4p.cpp
-SRC=micro_03_3stage_8c4p.cpp
-SRC=micro_04_2stage_12c4p.cpp
-SRC=micro_09_async.cpp
+
+# parameters
+ATTN_B ?= 16
+ATTN_H ?= 64
+ATTN_H_KV ?= 8
+ATTN_N ?= 2048
+ATTN_D ?= 128
+
+# if attention d is 64 use kernel.cpp else use kernel_64.cpp
+SRC=kernel_v02.cpp
+
+CPPFLAGS += -DATTN_B=$(ATTN_B)
+CPPFLAGS += -DATTN_H=$(ATTN_H)
+CPPFLAGS += -DATTN_H_KV=$(ATTN_H_KV)
+CPPFLAGS += -DATTN_N=$(ATTN_N)
 
 # HIP variables
 ROCM_INSTALL_DIR := $(ROCM_PATH)
-HIP_INCLUDE_DIR  := /opt/rocm/include/hip
+HIP_INCLUDE_DIR  := $(ROCM_INSTALL_DIR)/include/hip
 
-HIPCXX ?= /opt/rocm/bin/hipcc
+HIPCXX ?= $(ROCM_INSTALL_DIR)/bin/hipcc
 
 # Compiler flags based on GPU target
 ifeq ($(GPU_TARGET),CDNA2)
@@ -19,7 +30,7 @@ HIPFLAGS+= -DKITTENS_CDNA2 --offload-arch=gfx90a
 else ifeq ($(GPU_TARGET),CDNA3)
 HIPFLAGS+= -DKITTENS_CDNA3 --offload-arch=gfx942
 else ifeq ($(GPU_TARGET),CDNA4)
-HIPFLAGS+= -DKITTENS_CDNA4 --offload-arch=gfx950 -DHIP_ENABLE_WARP_SYNC_BUILTINS -ffast-math 
+HIPFLAGS+= -DKITTENS_CDNA4 --offload-arch=gfx950 -DHIP_ENABLE_WARP_SYNC_BUILTINS -ffast-math
 endif
 
 # Common variables and flags
@@ -39,7 +50,7 @@ ILDLIBS   += $(LDLIBS)
 
 PY_LDFLAGS := $(shell python3-config --ldflags | sed 's/-lcrypt//g')
 ICXXFLAGS += $(PY_LDFLAGS)
-ICXXFLAGS+= -I${THUNDERKITTENS_ROOT}/include -I${THUNDERKITTENS_ROOT}/prototype $(shell python3 -m pybind11 --includes) -shared -fPIC -Rpass-analysis=kernel-resource-usage
+ICXXFLAGS+= -I${THUNDERKITTENS_ROOT}/include -I${THUNDERKITTENS_ROOT}/prototype $(shell python3 -m pybind11 --includes) -shared -fPIC -Rpass-analysis=kernel-resource-usage --save-temps
 
 
 # Default target
