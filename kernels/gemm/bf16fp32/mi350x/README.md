@@ -1,5 +1,11 @@
-### AMD MI350 (gfx950) 
+# MI350X BF16 GEMM Kernels
+To run kernel `256_256_64_32_with16x32.cpp` and compare against baselines:
+```
+make
+python test_python.py
+```
 
+### AMD MI350 (gfx950) 
 
 Hardware Overview:
 

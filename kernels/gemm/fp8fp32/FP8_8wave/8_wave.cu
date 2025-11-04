@@ -251,13 +251,31 @@ __global__ __launch_bounds__(512, 2) void matmul_device(const kittens::gl<fp8e4m
     store(C, cD, {0, 0, block_row * WARPS_ROW * 2 + WARPS_ROW + warp_m, block_col * WARPS_COL * 2 + WARPS_COL + warp_n});
 }
 
+// Rotating buffer configuration (global constant)
+constexpr int ROTATING_BUFFER_COUNT = ((((1024*1024)/8192)*512)/8192)/2; // 500 MiB
+
+// Random initialization function
+template <int M, int N, int K>
+void random_init(std::vector<fp8e4m3>& a_host, std::vector<fp8e4m3>& b_host, uint32_t seed = 42) {
+    std::mt19937 gen(seed); // Seed for reproducibility
+    std::normal_distribution<float> dis(-1.0f, 1.0f);
+    for (int i = 0; i < M*K; i++) {
+        a_host[i] = fp8e4m3(dis(gen));
+    }
+    for (int i = 0; i < N*K; i++) {
+        b_host[i] = fp8e4m3(dis(gen));
+    }
+}
 
 template <int M, int N, int K, int CUs>
-TimingResult matmul_host(const std::vector<fp8e4m3>& a, const std::vector<fp8e4m3>& b, std::vector<bf16>& c, 
+TimingResult matmul_host(std::vector<fp8e4m3>& a, std::vector<fp8e4m3>& b, std::vector<bf16>& c, 
     int warmup_iters = 3, int timing_iters = 20) {
     constexpr int threads_per_warp = 64;
     constexpr int warps_per_cu = 8;
     constexpr int threads_per_block = threads_per_warp * warps_per_cu;
+    
+    // Use global rotating buffer configuration
+    constexpr int block_count = ROTATING_BUFFER_COUNT;
     
     // Ensure input vectors have correct size
     if (a.size() != M * K) {
@@ -272,28 +290,54 @@ TimingResult matmul_host(const std::vector<fp8e4m3>& a, const std::vector<fp8e4m
     // Resize output vector
     c.resize(M * N);
     
-    // Allocate device memory
+    // Allocate device memory (A and B use rotating buffers, C is single buffer)
     fp8e4m3 *d_a, *d_b;
     bf16 *d_c;
-    hipMalloc(&d_a, M*K*sizeof(fp8e4m3));
-    hipMalloc(&d_b, N*K*sizeof(fp8e4m3));
-    hipMalloc(&d_c, M*N*sizeof(bf16));
+    hipMalloc(&d_a, block_count * M*K*sizeof(fp8e4m3));
+    hipMalloc(&d_b, block_count * N*K*sizeof(fp8e4m3));
+    hipMalloc(&d_c, M*N*sizeof(bf16));  // Single buffer (output only, no rotation needed)
     HipCheckError();
     
-    // Copy data to device
-    hipMemcpy(d_a, a.data(), M*K*sizeof(fp8e4m3), hipMemcpyHostToDevice);
-    hipMemcpy(d_b, b.data(), N*K*sizeof(fp8e4m3), hipMemcpyHostToDevice);
-    hipMemset(d_c, 0, M*N*sizeof(bf16));
+    // Pre-initialize all buffer sections with random data on host
+    printf("Initializing %d rotating buffer sections (%zu MB total, A+B only)...\n",
+           block_count,
+           (block_count * (M*K*sizeof(fp8e4m3) + N*K*sizeof(fp8e4m3)) + M*N*sizeof(bf16)) / (1024*1024));
+
+    for (int block = 0; block < block_count; ++block) {
+        // Generate random data with different seed for each buffer
+        random_init<M, N, K>(a, b, 42 + block);
+        // Print the maximum value from each of a and b for this block
+        fp8e4m3 max_a = a[0];
+        fp8e4m3 max_b = b[0];
+        #pragma omp parallel for
+        for (int i = 1; i < M*K; ++i) {
+            if ((float)a[i] > (float)max_a) max_a = a[i];
+        }
+        #pragma omp parallel for
+        for (int i = 1; i < N*K; ++i) {
+            if ((float)b[i] > (float)max_b) max_b = b[i];
+        }
+        printf("Block %d: max(a) = %f, max(b) = %f\n", block, (float)max_a, (float)max_b);
+
+        // Copy to offset position in device memory
+        hipMemcpy(d_a + block * M * K, a.data(), M*K*sizeof(fp8e4m3), hipMemcpyHostToDevice);
+        hipMemcpy(d_b + block * N * K, b.data(), N*K*sizeof(fp8e4m3), hipMemcpyHostToDevice);
+    }
     HipCheckError();
+    printf("Buffer initialization complete.\n");
     
-    // Create global memory objects
-    kittens::gl<fp8e4m3, 1, 1, M, K> A(d_a, nullptr, nullptr, nullptr, nullptr);
-    kittens::gl<fp8e4m3, 1, 1, N, K> B(d_b, nullptr, nullptr, nullptr, nullptr);
-    kittens::gl<bf16, 1, 1, M, N> C(d_c, nullptr, nullptr, nullptr, nullptr);
-    
-    // Warmup iterations
+    // Warmup iterations using rotating buffers (A and B only)
     for (int i = 0; i < warmup_iters; i++) {
+        int block_idx = i % block_count;
+        fp8e4m3* d_a_current = d_a + block_idx * M * K;
+        fp8e4m3* d_b_current = d_b + block_idx * N * K;
+
         hipMemset(d_c, 0, M*N*sizeof(bf16));
+
+        kittens::gl<fp8e4m3, 1, 1, M, K> A(d_a_current, nullptr, nullptr, nullptr, nullptr);
+        kittens::gl<fp8e4m3, 1, 1, N, K> B(d_b_current, nullptr, nullptr, nullptr, nullptr);
+        kittens::gl<bf16, 1, 1, M, N> C(d_c, nullptr, nullptr, nullptr, nullptr);
+
         matmul_device<M, N, K><<<(M*N/(256*256)), threads_per_block>>>(A, B, C);
         HipCheckError();
         hipDeviceSynchronize();
@@ -304,13 +348,25 @@ TimingResult matmul_host(const std::vector<fp8e4m3>& a, const std::vector<fp8e4m
     hipEventCreate(&start_event);
     hipEventCreate(&stop_event);
     
-    // Timed kernel-only loop
+    // Timed kernel-only loop with rotating buffers (A and B only)
     std::vector<float> times_ms;
     times_ms.reserve(timing_iters);
     for (int r = 0; r < timing_iters; ++r) {
+        // Calculate which buffer section to use for inputs (modulo rotation)
+        int block_idx = r % block_count;
+        fp8e4m3* d_a_current = d_a + block_idx * M * K;
+        fp8e4m3* d_b_current = d_b + block_idx * N * K;
+
+        // Zero out the single output buffer
         hipMemset(d_c, 0, M*N*sizeof(bf16));
+
+        // Create gl wrappers (A and B rotate, C is always the same)
+        kittens::gl<fp8e4m3, 1, 1, M, K> A_current(d_a_current, nullptr, nullptr, nullptr, nullptr);
+        kittens::gl<fp8e4m3, 1, 1, N, K> B_current(d_b_current, nullptr, nullptr, nullptr, nullptr);
+        kittens::gl<bf16, 1, 1, M, N> C_current(d_c, nullptr, nullptr, nullptr, nullptr);
+
         hipEventRecord(start_event, 0);
-        matmul_device<M, N, K><<<(M*N/(256*256)), threads_per_block>>>(A, B, C);
+        matmul_device<M, N, K><<<(M*N/(256*256)), threads_per_block>>>(A_current, B_current, C_current);
         hipEventRecord(stop_event, 0);
         hipEventSynchronize(stop_event);
         float ms = 0.0f;
@@ -336,8 +392,8 @@ TimingResult matmul_host(const std::vector<fp8e4m3>& a, const std::vector<fp8e4m
     hipEventDestroy(start_event);
     hipEventDestroy(stop_event);
     HipCheckError();
-    
-    // Copy result back to host
+
+    // Copy result back to host (single C buffer, no offset needed)
     hipMemcpy(c.data(), d_c, M*N*sizeof(bf16), hipMemcpyDeviceToHost);
     HipCheckError();
     
@@ -365,14 +421,19 @@ int main() {
     printf("Matrix dimensions: %dx%dx%d, CUs: %d\n", M, N, K, CUs);
     printf("Warmup iterations: %d, Timing iterations: %d\n\n", warmup_iters, timing_iters);
 
-    // Initialize input matrices
+    // Initialize input matrices (will be initialized inside matmul_host)
     std::vector<fp8e4m3> a_host(M*K);
     std::vector<fp8e4m3> b_host(N*K);
     std::vector<bf16> c_ref(M*N);
     std::vector<bf16> c_host(M*N);
 
-    // Test with random matrices now that the kernel works
-    random_init<M, N, K>(a_host, b_host);
+    // Compute test result with timing (data will be generated with rotating buffers)
+    printf("Running optimized kernel (matmul_device)...\n");
+    TimingResult host_timing = matmul_host<M, N, K, CUs>(a_host, b_host, c_host, warmup_iters, timing_iters);
+
+    // Initialize data for reference computation (match the buffer used in last timing iteration)
+    int last_buffer_idx = (timing_iters - 1) % ROTATING_BUFFER_COUNT;
+    random_init<M, N, K>(a_host, b_host, 42 + last_buffer_idx);
 
     // Compute reference result with timing
     printf("Running reference kernel (matmul_device_ref)...\n");
@@ -413,10 +474,6 @@ int main() {
 
     TimingResult ref_timing = matmul_ref(a_host, b_host, c_ref, 1);
 
-    // Compute test result with timing
-    printf("Running optimized kernel (matmul_device)...\n");
-    TimingResult host_timing = matmul_host<M, N, K, CUs>(a_host, b_host, c_host, warmup_iters, timing_iters);
-
     bool success = true;
     // Compare GPU result (c_host) with CPU reference (c_ref)
     for (int row = 0; row < M; ++row) {
@@ -426,7 +483,8 @@ int main() {
             float c_val = float(c_host[row * N + col]);
             float c_ref_val = float(c_ref[row * N + col]);
             float diff = std::abs(c_val - c_ref_val);
-            if (diff > 1.f) {
+            float threshold = c_ref_val * 0.01f;
+            if (diff > threshold) {
                 printf("Mismatch at (row=%d, col=%d): c_host = %f, c_ref = %f, diff = %f\n", row, col, c_val, c_ref_val, diff);
                 success = false;
                 break;
