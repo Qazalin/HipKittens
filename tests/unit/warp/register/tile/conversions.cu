@@ -118,134 +118,126 @@ struct test_subtile {
     }
 };
 
-// struct test_make_causal {
-//     template<int H, int W, int NW, kittens::ducks::rt_layout::all L> using valid = std::bool_constant<NW == 1 && H==W && W*H<=64>; // this is warp-level
-//     static inline const std::string test_identifier = "reg_make_causal";
-//     template<int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
-//         for(int i = 0; i < H*ROWS; i++)
-//             for(int j = 0; j < W*COLS; j++)
-//                 o_ref[i*W*COLS + j] = j<=i ? i_ref[i*W*COLS + j] : 0;
-//     }
-//     template<int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GL input, const GL output) {
-//         kittens::rt_fl<ROWS*H, COLS*W, L> reg_tile;
-//         kittens::load(reg_tile, input, {});
-//         kittens::make_causal(reg_tile, reg_tile);
-//         kittens::store(output, reg_tile, {});
-//     }
-// };
+struct test_make_causal {
+    using dtype = kittens::bf16;
+    template<typename RT_SHAPE, typename ST_SHAPE, int H, int W, int NW, kittens::ducks::rt_layout::all L> using valid = std::bool_constant<NW == 1 && H==W && W*H<=64>; // this is warp-level
+    static inline const std::string test_identifier = "reg_make_causal";
+    template<typename RT_SHAPE, typename ST_SHAPE, int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+        for(int i = 0; i < H*RT_SHAPE::rows; i++)
+            for(int j = 0; j < W*RT_SHAPE::cols; j++)
+                o_ref[i*W*RT_SHAPE::cols + j] = j<=i ? i_ref[i*W*RT_SHAPE::cols + j] : 0;
+    }
+    template<typename RT_SHAPE, typename ST_SHAPE, typename dtype, int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GL input, const GL output) {
+        kittens::rt<dtype, RT_SHAPE::rows*H, RT_SHAPE::cols*W, L, RT_SHAPE> reg_tile;
+        kittens::load(reg_tile, input, {});
+        kittens::make_causal(reg_tile, reg_tile);
+        kittens::store(output, reg_tile, {});
+    }
+};
 
-// struct test_make_causal_t {
-//     template<int H, int W, int NW, kittens::ducks::rt_layout::all L> using valid = std::bool_constant<NW == 1 && H==W && W*H<=64>; // this is warp-level
-//     static inline const std::string test_identifier = "reg_make_causal";
-//     template<int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
-//         for(int i = 0; i < H*ROWS; i++)
-//             for(int j = 0; j < W*COLS; j++)
-//                 o_ref[i*W*COLS + j] = j>=i ? i_ref[i*W*COLS + j] : 0;
-//     }
-//     template<int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GL input, const GL output) {
-//         kittens::rt_fl<ROWS*H, COLS*W, L> reg_tile;
-//         kittens::load(reg_tile, input, {});
-//         kittens::make_causal_t(reg_tile, reg_tile);
-//         kittens::store(output, reg_tile, {});
-//     }
-// };
+struct test_tril {
+    template<typename RT_SHAPE, typename ST_SHAPE, int H, int W, int NW, kittens::ducks::rt_layout::all L> using valid = std::bool_constant<NW == 1 && H==W && W*H<=64>; // this is warp-level
+    static inline const std::string test_identifier = "reg_tril";
+    template<typename RT_SHAPE, typename ST_SHAPE, int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+        // triangular lower, with diagonal starting at row_idx 4
+        for(int i = 0; i < H*RT_SHAPE::rows; i++)
+            for(int j = 0; j < W*RT_SHAPE::cols; j++)
+                o_ref[i*W*RT_SHAPE::cols + j] = i>=j+(4*H) ? i_ref[i*W*RT_SHAPE::cols + j] : 0;
+    }
+    template<typename RT_SHAPE, typename ST_SHAPE, typename dtype, int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GL input, const GL output) {
+        kittens::rt<dtype, RT_SHAPE::rows*H, RT_SHAPE::cols*W, L, RT_SHAPE> reg_tile;
+        kittens::load(reg_tile, input, {});
+        kittens::tril(reg_tile, reg_tile, 4*H);
+        kittens::store(output, reg_tile, {});
+    }
+};
+struct test_triu {
+    template<typename RT_SHAPE, typename ST_SHAPE, int H, int W, int NW, kittens::ducks::rt_layout::all L> using valid = std::bool_constant<NW == 1 && H==W && W*H<=64>; // this is warp-level
+    static inline const std::string test_identifier = "reg_triu";
+    template<typename RT_SHAPE, typename ST_SHAPE, int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+        // triangular upper, with diagonal starting at row_idx 4
+        for(int i = 0; i < H*RT_SHAPE::rows; i++)
+            for(int j = 0; j < W*RT_SHAPE::cols; j++)
+                o_ref[i*W*RT_SHAPE::cols + j] = i<=j+(4*H) ? i_ref[i*W*RT_SHAPE::cols + j] : 0;
+    }
+    template<typename RT_SHAPE, typename ST_SHAPE, typename dtype, int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GL input, const GL output) {
+        kittens::rt<dtype, RT_SHAPE::rows*H, RT_SHAPE::cols*W, L, RT_SHAPE> reg_tile;
+        kittens::load(reg_tile, input, {});
+        kittens::triu(reg_tile, reg_tile, 4*H);
+        kittens::store(output, reg_tile, {});
+    }
+};
 
-// struct test_tril {
-//     template<int H, int W, int NW, kittens::ducks::rt_layout::all L> using valid = std::bool_constant<NW == 1 && H==W && W*H<=64>; // this is warp-level
-//     static inline const std::string test_identifier = "reg_tril";
-//     template<int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
-//         // triangular lower, with diagonal starting at row_idx 4
-//         for(int i = 0; i < H*ROWS; i++)
-//             for(int j = 0; j < W*COLS; j++)
-//                 o_ref[i*W*COLS + j] = i>=j+(4*H) ? i_ref[i*W*COLS + j] : 0;
-//     }
-//     template<int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GL input, const GL output) {
-//         kittens::rt_fl<ROWS*H, COLS*W, L> reg_tile;
-//         kittens::load(reg_tile, input, {});
-//         kittens::tril(reg_tile, reg_tile, 4*H);
-//         kittens::store(output, reg_tile, {});
-//     }
-// };
-// struct test_triu {
-//     template<int H, int W, int NW, kittens::ducks::rt_layout::all L> using valid = std::bool_constant<NW == 1 && H==W && W*H<=64>; // this is warp-level
-//     static inline const std::string test_identifier = "reg_triu";
-//     template<int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
-//         // triangular upper, with diagonal starting at row_idx 4
-//         for(int i = 0; i < H*ROWS; i++)
-//             for(int j = 0; j < W*COLS; j++)
-//                 o_ref[i*W*COLS + j] = i<=j+(4*H) ? i_ref[i*W*COLS + j] : 0;
-//     }
-//     template<int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GL input, const GL output) {
-//         kittens::rt_fl<ROWS*H, COLS*W, L> reg_tile;
-//         kittens::load(reg_tile, input, {});
-//         kittens::triu(reg_tile, reg_tile, 4*H);
-//         kittens::store(output, reg_tile, {});
-//     }
-// };
-// struct test_right_fill {
-//     template<int H, int W, int NW, kittens::ducks::rt_layout::all L> using valid = std::bool_constant<NW == 1 && H==W && W*H<=64>; // this is warp-level
-//     static inline const std::string test_identifier = "reg_right_fill";
-//     template<int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
-//         // here, set everything to from and right of col_idx 8 is set to zero
-//         for(int i = 0; i < H*ROWS; i++) 
-//             for(int j = 0; j < W*COLS; j++) 
-//             o_ref[i*W*COLS + j] = (j < (8 * W)) ? i_ref[i*W*COLS + j] : 0;
-//     }
-//     template<int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GL input, const GL output) {
-//         kittens::rt_fl<ROWS*H, COLS*W, L> reg_tile;
-//         kittens::load(reg_tile, input, {});
-//         kittens::right_fill(reg_tile, reg_tile, 8 * W);
-//         kittens::store(output, reg_tile, {});
-//     }
-// };
-// struct test_left_fill {
-//     template<int H, int W, int NW, kittens::ducks::rt_layout::all L> using valid = std::bool_constant<NW == 1 && H==W && W*H<=64>; // this is warp-level
-//     static inline const std::string test_identifier = "reg_left_fill";
-//     template<int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
-//         // here, set everything to from and left of col_idx 8 is set to zero
-//         for(int i = 0; i < H*ROWS; i++) 
-//             for(int j = 0; j < W*COLS; j++) 
-//                 o_ref[i*W*COLS + j] = (j >= (8 * W)) ? i_ref[i*W*COLS + j] : 0;
-//     }
-//     template<int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GL input, const GL output) {
-//         kittens::rt_fl<ROWS*H, COLS*W, L> reg_tile;
-//         kittens::load(reg_tile, input, {});
-//         kittens::left_fill(reg_tile, reg_tile, 8 * W);
-//         kittens::store(output, reg_tile, {});
-//     }
-// };
-// struct test_lower_fill {
-//     template<int H, int W, int NW, kittens::ducks::rt_layout::all L> using valid = std::bool_constant<NW == 1 && H==W && W*H<=64>; // this is warp-level
-//     static inline const std::string test_identifier = "reg_lower_fill";
-//     template<int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
-//         // here, set everything to from and lower of row_idx 8 is set to zero
-//         for(int i = 0; i < H*ROWS; i++) 
-//             for(int j = 0; j < W*COLS; j++) 
-//                 o_ref[i*W*COLS + j] = (i < (8 * H)) ? i_ref[i*W*COLS + j] : 0;
-//     }
-//     template<int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GL input, const GL output) {
-//         kittens::rt_fl<ROWS*H, COLS*W, L> reg_tile;
-//         kittens::load(reg_tile, input, {});
-//         kittens::lower_fill(reg_tile, reg_tile, 8 * H);
-//         kittens::store(output, reg_tile, {});
-//     }
-// };
-// struct test_upper_fill {
-//     template<int H, int W, int NW, kittens::ducks::rt_layout::all L> using valid = std::bool_constant<NW == 1 && H==W && W*H<=64>; // this is warp-level
-//     static inline const std::string test_identifier = "reg_upper_fill";
-//     template<int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
-//         // here, set everything to from and upper of row_idx 8 is set to zero
-//         for(int i = 0; i < H*ROWS; i++) 
-//             for(int j = 0; j < W*COLS; j++) 
-//                 o_ref[i*W*COLS + j] = (i >= ((8 * H))) ? i_ref[i*W*COLS + j] : 0;
-//     }
-//     template<int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GL input, const GL output) {
-//         kittens::rt_fl<ROWS*H, COLS*W, L> reg_tile;
-//         kittens::load(reg_tile, input, {});
-//         kittens::upper_fill(reg_tile, reg_tile, 8 * H);
-//         kittens::store(output, reg_tile, {});
-//     }
-// };
+struct test_right_fill {
+    using dtype = kittens::bf16;
+    template<typename RT_SHAPE, typename ST_SHAPE, int H, int W, int NW, kittens::ducks::rt_layout::all L> using valid = std::bool_constant<NW == 1 && H==W && W*H<=64>; // this is warp-level
+    static inline const std::string test_identifier = "reg_right_fill";
+    template<typename RT_SHAPE, typename ST_SHAPE, int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+        // here, set everything to from and right of col_idx 8 is set to zero
+        for(int i = 0; i < H*RT_SHAPE::rows; i++) 
+            for(int j = 0; j < W*RT_SHAPE::cols; j++) 
+            o_ref[i*W*RT_SHAPE::cols + j] = (j < (8 * W)) ? i_ref[i*W*RT_SHAPE::cols + j] : 0;
+    }
+    template<typename RT_SHAPE, typename ST_SHAPE, typename dtype, int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GL input, const GL output) {
+        kittens::rt<dtype, RT_SHAPE::rows*H, RT_SHAPE::cols*W, L, RT_SHAPE> reg_tile;
+        kittens::load(reg_tile, input, {});
+        kittens::right_fill(reg_tile, reg_tile, 8 * W);
+        kittens::store(output, reg_tile, {});
+    }
+};
+
+struct test_left_fill {
+    using dtype = kittens::bf16;
+    template<typename RT_SHAPE, typename ST_SHAPE, int H, int W, int NW, kittens::ducks::rt_layout::all L> using valid = std::bool_constant<NW == 1 && H==W && W*H<=64>; // this is warp-level
+    static inline const std::string test_identifier = "reg_left_fill";
+    template<typename RT_SHAPE, typename ST_SHAPE, int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+        // here, set everything to from and left of col_idx 8 is set to zero
+        for(int i = 0; i < H*RT_SHAPE::rows; i++) 
+            for(int j = 0; j < W*RT_SHAPE::cols; j++) 
+                o_ref[i*W*RT_SHAPE::cols + j] = (j >= (8 * W)) ? i_ref[i*W*RT_SHAPE::cols + j] : 0;
+    }
+    template<typename RT_SHAPE, typename ST_SHAPE, typename dtype, int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GL input, const GL output) {
+        kittens::rt<dtype, RT_SHAPE::rows*H, RT_SHAPE::cols*W, L, RT_SHAPE> reg_tile;
+        kittens::load(reg_tile, input, {});
+        kittens::left_fill(reg_tile, reg_tile, 8 * W);
+        kittens::store(output, reg_tile, {});
+    }
+};
+
+struct test_lower_fill {
+    using dtype = kittens::bf16;
+    template<typename RT_SHAPE, typename ST_SHAPE, int H, int W, int NW, kittens::ducks::rt_layout::all L> using valid = std::bool_constant<NW == 1 && H==W && W*H<=64>; // this is warp-level
+    static inline const std::string test_identifier = "reg_lower_fill";
+    template<typename RT_SHAPE, typename ST_SHAPE, int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+        // here, set everything to from and lower of row_idx 8 is set to zero
+        for(int i = 0; i < H*RT_SHAPE::rows; i++) 
+            for(int j = 0; j < W*RT_SHAPE::cols; j++) 
+                o_ref[i*W*RT_SHAPE::cols + j] = (i < (8 * H)) ? i_ref[i*W*RT_SHAPE::cols + j] : 0;
+    }
+    template<typename RT_SHAPE, typename ST_SHAPE, typename dtype, int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GL input, const GL output) {
+        kittens::rt<dtype, RT_SHAPE::rows*H, RT_SHAPE::cols*W, L, RT_SHAPE> reg_tile;
+        kittens::load(reg_tile, input, {});
+        kittens::lower_fill(reg_tile, reg_tile, 8 * H);
+        kittens::store(output, reg_tile, {});
+    }
+};
+struct test_upper_fill {
+    using dtype = kittens::bf16;
+    template<typename RT_SHAPE, typename ST_SHAPE, int H, int W, int NW, kittens::ducks::rt_layout::all L> using valid = std::bool_constant<NW == 1 && H==W && W*H<=64>; // this is warp-level
+    static inline const std::string test_identifier = "reg_upper_fill";
+    template<typename RT_SHAPE, typename ST_SHAPE, int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+        // here, set everything to from and upper of row_idx 8 is set to zero
+        for(int i = 0; i < H*RT_SHAPE::rows; i++) 
+            for(int j = 0; j < W*RT_SHAPE::cols; j++) 
+                o_ref[i*W*RT_SHAPE::cols + j] = (i >= ((8 * H))) ? i_ref[i*W*RT_SHAPE::cols + j] : 0;
+    }
+    template<typename RT_SHAPE, typename ST_SHAPE, typename dtype, int H, int W, int NW, gl_t GL, kittens::ducks::rt_layout::all L> __device__ static void device_func(const GL input, const GL output) {
+        kittens::rt<dtype, RT_SHAPE::rows*H, RT_SHAPE::cols*W, L, RT_SHAPE> reg_tile;
+        kittens::load(reg_tile, input, {});
+        kittens::upper_fill(reg_tile, reg_tile, 8 * H);
+        kittens::store(output, reg_tile, {});
+    }
+};
 
 void warp::reg::tile::conversions::tests(test_data &results) {
     std::cout << "\n ----- Starting ops/warp/register/tile/conversions tests! -----\n" << std::endl;
@@ -287,6 +279,20 @@ void warp::reg::tile::conversions::tests(test_data &results) {
     sweep_size_2d_warp<test_subtile, RT_SHAPE_1, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, std::integral_constant<int, 3>>::run(results);
     sweep_size_2d_warp<test_subtile, RT_SHAPE_1, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, std::integral_constant<int, 4>>::run(results);
 
+    sweep_size_2d_warp<test_right_fill, RT_SHAPE_1, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_right_fill, RT_SHAPE_1, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
+    sweep_size_2d_warp<test_left_fill,  RT_SHAPE_1, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_left_fill,  RT_SHAPE_1, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
+    sweep_size_2d_warp<test_lower_fill, RT_SHAPE_1, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_lower_fill, RT_SHAPE_1, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
+    sweep_size_2d_warp<test_upper_fill, RT_SHAPE_1, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_upper_fill, RT_SHAPE_1, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
+
+    sweep_size_2d_warp<test_tril, RT_SHAPE_1, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_tril, RT_SHAPE_1, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
+    sweep_size_2d_warp<test_triu, RT_SHAPE_1, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_triu, RT_SHAPE_1, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
+
     using RT_SHAPE_2 = kittens::ducks::rt_shape::rt_32x16;
     transpose_sweep_size_warp<test_transpose, RT_SHAPE_2, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
     transpose_sweep_size_warp<test_transpose, RT_SHAPE_2, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
@@ -302,6 +308,20 @@ void warp::reg::tile::conversions::tests(test_data &results) {
     sweep_size_2d_warp<test_subtile, RT_SHAPE_2, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, std::integral_constant<int, 2>>::run(results);
     sweep_size_2d_warp<test_subtile, RT_SHAPE_2, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, std::integral_constant<int, 3>>::run(results);
     sweep_size_2d_warp<test_subtile, RT_SHAPE_2, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, std::integral_constant<int, 4>>::run(results);
+
+    sweep_size_2d_warp<test_right_fill, RT_SHAPE_2, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_right_fill, RT_SHAPE_2, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
+    sweep_size_2d_warp<test_left_fill,  RT_SHAPE_2, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_left_fill,  RT_SHAPE_2, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
+    sweep_size_2d_warp<test_lower_fill, RT_SHAPE_2, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_lower_fill, RT_SHAPE_2, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
+    sweep_size_2d_warp<test_upper_fill, RT_SHAPE_2, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_upper_fill, RT_SHAPE_2, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
+
+    sweep_size_2d_warp<test_tril, RT_SHAPE_2, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_tril, RT_SHAPE_2, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
+    sweep_size_2d_warp<test_triu, RT_SHAPE_2, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_triu, RT_SHAPE_2, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
 
     using RT_SHAPE_3 = kittens::ducks::rt_shape::rt_16x16;
     transpose_sweep_size_warp<test_transpose, RT_SHAPE_3, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
@@ -319,6 +339,22 @@ void warp::reg::tile::conversions::tests(test_data &results) {
     sweep_size_2d_warp<test_subtile, RT_SHAPE_3, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, std::integral_constant<int, 3>>::run(results);
     sweep_size_2d_warp<test_subtile, RT_SHAPE_3, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, std::integral_constant<int, 4>>::run(results);
 
+    sweep_size_2d_warp<test_right_fill, RT_SHAPE_3, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_right_fill, RT_SHAPE_3, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
+    sweep_size_2d_warp<test_left_fill,  RT_SHAPE_3, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_left_fill,  RT_SHAPE_3, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
+    sweep_size_2d_warp<test_lower_fill, RT_SHAPE_3, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_lower_fill, RT_SHAPE_3, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
+    sweep_size_2d_warp<test_upper_fill, RT_SHAPE_3, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_upper_fill, RT_SHAPE_3, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
+
+    sweep_size_2d_warp<test_tril, RT_SHAPE_3, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_tril, RT_SHAPE_3, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
+    sweep_size_2d_warp<test_triu, RT_SHAPE_3, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_triu, RT_SHAPE_3, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
+
+    sweep_size_2d_warp<test_make_causal, RT_SHAPE_3, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
+
     using RT_SHAPE_4 = kittens::ducks::rt_shape::rt_32x32;
     transpose_sweep_size_warp<test_transpose, RT_SHAPE_4, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
     transpose_sweep_size_warp<test_transpose, RT_SHAPE_4, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
@@ -334,6 +370,22 @@ void warp::reg::tile::conversions::tests(test_data &results) {
     sweep_size_2d_warp<test_subtile, RT_SHAPE_4, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, std::integral_constant<int, 2>>::run(results);
     sweep_size_2d_warp<test_subtile, RT_SHAPE_4, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, std::integral_constant<int, 3>>::run(results);
     sweep_size_2d_warp<test_subtile, RT_SHAPE_4, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, std::integral_constant<int, 4>>::run(results);
+
+    sweep_size_2d_warp<test_right_fill, RT_SHAPE_4, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_right_fill, RT_SHAPE_4, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
+    sweep_size_2d_warp<test_left_fill,  RT_SHAPE_4, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_left_fill,  RT_SHAPE_4, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
+    sweep_size_2d_warp<test_lower_fill, RT_SHAPE_4, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_lower_fill, RT_SHAPE_4, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
+    sweep_size_2d_warp<test_upper_fill, RT_SHAPE_4, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_upper_fill, RT_SHAPE_4, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
+
+    sweep_size_2d_warp<test_tril, RT_SHAPE_4, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_tril, RT_SHAPE_4, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
+    sweep_size_2d_warp<test_triu, RT_SHAPE_4, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_triu, RT_SHAPE_4, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
+
+    sweep_size_2d_warp<test_make_causal, RT_SHAPE_4, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
 
     using RT_SHAPE_5 = kittens::ducks::rt_shape::rt_32x32_8;
     transpose_sweep_size_warp<test_transpose, RT_SHAPE_5, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
@@ -351,6 +403,20 @@ void warp::reg::tile::conversions::tests(test_data &results) {
     sweep_size_2d_warp<test_subtile, RT_SHAPE_5, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, std::integral_constant<int, 3>>::run(results);
     sweep_size_2d_warp<test_subtile, RT_SHAPE_5, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, std::integral_constant<int, 4>>::run(results);
 
+    sweep_size_2d_warp<test_right_fill, RT_SHAPE_5, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_right_fill, RT_SHAPE_5, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
+    sweep_size_2d_warp<test_left_fill,  RT_SHAPE_5, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_left_fill,  RT_SHAPE_5, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
+    sweep_size_2d_warp<test_lower_fill, RT_SHAPE_5, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_lower_fill, RT_SHAPE_5, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
+    sweep_size_2d_warp<test_upper_fill, RT_SHAPE_5, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_upper_fill, RT_SHAPE_5, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
+
+    sweep_size_2d_warp<test_tril, RT_SHAPE_5, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_tril, RT_SHAPE_5, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
+    sweep_size_2d_warp<test_triu, RT_SHAPE_5, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_triu, RT_SHAPE_5, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
+
     using RT_SHAPE_6 = kittens::ducks::rt_shape::rt_16x32_4;
     transpose_sweep_size_warp<test_transpose, RT_SHAPE_6, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
     transpose_sweep_size_warp<test_transpose, RT_SHAPE_6, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
@@ -366,6 +432,20 @@ void warp::reg::tile::conversions::tests(test_data &results) {
     sweep_size_2d_warp<test_subtile, RT_SHAPE_6, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, std::integral_constant<int, 2>>::run(results);
     sweep_size_2d_warp<test_subtile, RT_SHAPE_6, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, std::integral_constant<int, 3>>::run(results);
     sweep_size_2d_warp<test_subtile, RT_SHAPE_6, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, std::integral_constant<int, 4>>::run(results);
+
+    sweep_size_2d_warp<test_right_fill, RT_SHAPE_6, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_right_fill, RT_SHAPE_6, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
+    sweep_size_2d_warp<test_left_fill,  RT_SHAPE_6, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_left_fill,  RT_SHAPE_6, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
+    sweep_size_2d_warp<test_lower_fill, RT_SHAPE_6, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_lower_fill, RT_SHAPE_6, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
+    sweep_size_2d_warp<test_upper_fill, RT_SHAPE_6, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_upper_fill, RT_SHAPE_6, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
+
+    sweep_size_2d_warp<test_tril, RT_SHAPE_6, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_tril, RT_SHAPE_6, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
+    sweep_size_2d_warp<test_triu, RT_SHAPE_6, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_triu, RT_SHAPE_6, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
 
     using RT_SHAPE_7 = kittens::ducks::rt_shape::rt_32x16_4;
     transpose_sweep_size_warp<test_transpose, RT_SHAPE_7, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
@@ -383,23 +463,19 @@ void warp::reg::tile::conversions::tests(test_data &results) {
     sweep_size_2d_warp<test_subtile, RT_SHAPE_7, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, std::integral_constant<int, 3>>::run(results);
     sweep_size_2d_warp<test_subtile, RT_SHAPE_7, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, std::integral_constant<int, 4>>::run(results);
 
-    // sweep_size_2d_warp<test_make_causal, SIZE, SIZE, kittens::ducks::rt_layout::row>::run(results);
-    // sweep_size_2d_warp<test_make_causal_t, SIZE, SIZE, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_right_fill, RT_SHAPE_7, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_right_fill, RT_SHAPE_7, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
+    sweep_size_2d_warp<test_left_fill,  RT_SHAPE_7, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_left_fill,  RT_SHAPE_7, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
+    sweep_size_2d_warp<test_lower_fill, RT_SHAPE_7, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_lower_fill, RT_SHAPE_7, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
+    sweep_size_2d_warp<test_upper_fill, RT_SHAPE_7, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_upper_fill, RT_SHAPE_7, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
 
-    // sweep_size_2d_warp<test_right_fill, SIZE, SIZE, kittens::ducks::rt_layout::row>::run(results);
-    // sweep_size_2d_warp<test_right_fill, SIZE, SIZE, kittens::ducks::rt_layout::col>::run(results);
-    // sweep_size_2d_warp<test_left_fill,  SIZE, SIZE, kittens::ducks::rt_layout::row>::run(results);
-    // sweep_size_2d_warp<test_left_fill,  SIZE, SIZE, kittens::ducks::rt_layout::col>::run(results);
-
-    // sweep_size_2d_warp<test_lower_fill, SIZE, SIZE, kittens::ducks::rt_layout::row>::run(results);
-    // sweep_size_2d_warp<test_lower_fill, SIZE, SIZE, kittens::ducks::rt_layout::col>::run(results);
-    // sweep_size_2d_warp<test_upper_fill, SIZE, SIZE, kittens::ducks::rt_layout::row>::run(results);
-    // sweep_size_2d_warp<test_upper_fill, SIZE, SIZE, kittens::ducks::rt_layout::col>::run(results);
-
-    // sweep_size_2d_warp<test_tril, SIZE, SIZE, kittens::ducks::rt_layout::row>::run(results);
-    // sweep_size_2d_warp<test_tril, SIZE, SIZE, kittens::ducks::rt_layout::col>::run(results);
-    // sweep_size_2d_warp<test_triu, SIZE, SIZE, kittens::ducks::rt_layout::row>::run(results);
-    // sweep_size_2d_warp<test_triu, SIZE, SIZE, kittens::ducks::rt_layout::col>::run(results);
+    sweep_size_2d_warp<test_tril, RT_SHAPE_7, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_tril, RT_SHAPE_7, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
+    sweep_size_2d_warp<test_triu, RT_SHAPE_7, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::row>::run(results);
+    sweep_size_2d_warp<test_triu, RT_SHAPE_7, DEFAULT_ST_SHAPE, SIZE, SIZE, 1, kittens::ducks::rt_layout::col>::run(results);
 }
 
 #endif

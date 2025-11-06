@@ -69,7 +69,9 @@ template<typename _T, ducks::rt_layout::all _layout, ducks::rt_shape::all _shape
 
     static_assert(num_elements % stride == 0, "num_elements must be divisible by stride");
 
-    static constexpr int packed_per_thread    = (elements_per_thread / base_types::packing<dtype>::num()) ;
+    static constexpr int num_packed = base_types::packing<dtype>::num();
+    static constexpr int packed_per_thread    = (elements_per_thread / num_packed);
+    static constexpr int packed_per_stride    = (stride / num_packed);
     static constexpr int registers_per_thread = packed_per_thread * sizeof(dtype) / 4;
 
     using row_vec_layout = std::conditional_t<std::is_same_v<layout, ducks::rt_layout::row>, ducks::rv_layout::align, ducks::rv_layout::ortho>; // for holding column reductions

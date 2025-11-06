@@ -195,8 +195,8 @@ test_result validate(T *d_i, T *d_o, const std::vector<float> &i_ref, std::vecto
     for(int i = 0; i < output_size; i++) {
         auto diff = abs(o_ref[i] - o[i]);
         if(diff > atol + rtol*abs(o_ref[i])) {
-            printf("o_ref[%d]: %f, o[%d]: %f\n", i, o_ref[i], i, o[i]);
-            printf("abs(o_ref[%d] - o[%d]): %f\n", i, i, diff);
+            // printf("o_ref[%d]: %f, o[%d]: %f\n", i, o_ref[i], i, o[i]);
+            // printf("abs(o_ref[%d] - o[%d]): %f\n", i, i, diff);
             good = false;
             if(first_mismatch_idx == -1) {
                 first_mismatch_idx = i;

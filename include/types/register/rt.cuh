@@ -73,11 +73,13 @@ struct rt {
     static constexpr int base_tile_rows        = rt_base<T, layout, shape>::rows;        ///< Size of the base tile.
     static constexpr int base_tile_cols        = rt_base<T, layout, shape>::cols;        ///< Size of the base tile.
     static constexpr int base_tile_stride      = rt_base<T, layout, shape>::stride;      ///< Stride of the base tile.
+    static constexpr int base_tile_packed_per_stride = rt_base<T, layout, shape>::packed_per_stride; ///< Packed elements per stride.
     static constexpr int base_tile_num_strides = rt_base<T, layout, shape>::num_strides; ///< Number of strides per base tile.
     static constexpr int base_tile_reductions = rt_base<T, layout, shape>::reductions;
     static constexpr int base_tile_threads_per_reduction = rt_base<T, layout, shape>::threads_per_reduction;
     static constexpr int base_tile_elements_per_stride_group = rt_base<T, layout, shape>::elements_per_stride_group;
 
+    static constexpr int num_packed = rt_base<T, layout, shape>::num_packed;
     static constexpr int num_elements        = rt_base<T, layout, shape>::num_elements        * width * height; ///< Total number of elements.
     static constexpr int elements_per_thread = rt_base<T, layout, shape>::elements_per_thread * width * height; ///< Elements handled per thread.
     static constexpr int packed_per_thread   = rt_base<T, layout, shape>::packed_per_thread   * width * height; ///< Packed elements per thread.
