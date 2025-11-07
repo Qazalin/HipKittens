@@ -823,9 +823,9 @@ __global__ void attend_bwd_combined_ker(const attn_bwd_combined_globals<D> g) {
     kv_tile<D, float, row_l, rt_32x32_s> dK_j, dV_j;
     transpose(dK_j, dK_j_T);
     transpose(dV_j, dV_j_T);
-    store<1>(g.dVg, dV_j, {batch_idx, v_row, kv_head_idx, 0});
+    store<1>(g.dVg, dV_j, {batch_idx, j, kv_head_idx, 0});
     mul(dK_j, dK_j, dP_SCALE_FACTOR);
-    store<1>(g.dKg, dK_j, {batch_idx, v_row, kv_head_idx, 0});
+    store<1>(g.dKg, dK_j, {batch_idx, j, kv_head_idx, 0});
 }
 
 template<int D>

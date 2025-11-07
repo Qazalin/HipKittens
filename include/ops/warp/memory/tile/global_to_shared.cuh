@@ -337,7 +337,7 @@ __device__ __forceinline__ void load(ST& dst, const GL& src, const COORD& idx,
     constexpr int bytes_per_thread = 16;
     constexpr int bytes_per_memcpy = bytes_per_thread * N_THREADS;
     constexpr int memcpy_per_tile  = (ST::rows * ST::cols * sizeof(T)) / bytes_per_memcpy;
-    static_assert(bytes_per_memcpy % 16 == 0, "LDS bump must be 16B-aligned");
+    static_assert(bytes_per_memcpy % 16 == 0, "LDS bump must be 16-aligned");
 
     constexpr int elem_per_thread = bytes_per_thread / sizeof(T);
     constexpr int elem_per_warp   = elem_per_thread * kittens::WARP_THREADS;
