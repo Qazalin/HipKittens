@@ -29,6 +29,13 @@ template<int S, int NW> std::string generate_test_name(std::string test_id) {
 /**
 * @brief Generate a test name for a 1D test with a row or column layout for 16x32 shapes. 
 */
+template<kittens::ducks::rt_shape::all RT_SHAPE, kittens::ducks::st_shape::all ST_SHAPE, int S, int NW> std::string generate_test_name(std::string test_id) {
+    std::string label = generate_test_name<S,NW>(test_id);
+    return label;
+}
+/**
+* @brief Generate a test name for a 1D test with a row or column layout for 16x32 shapes. 
+*/
 template<kittens::ducks::rt_shape::all RT_SHAPE, kittens::ducks::st_shape::all ST_SHAPE, int S, int NW, kittens::ducks::rt_layout::all L> std::string generate_test_name(std::string test_id) {
     std::string label = generate_test_name<S,NW>(test_id);
 
@@ -322,8 +329,8 @@ template<typename test, typename RT_SHAPE, typename ST_SHAPE, int MAX_S=8, int N
 template<template<typename> typename test, typename RT_SHAPE, typename ST_SHAPE, int MAX_S=8, int NUM_WORKERS=1, typename... args>
 struct sweep_gmem_type_1d {
     static void run(test_data &results) {
-        sweep_size_1d<test<float>, RT_SHAPE, ST_SHAPE, MAX_S, NUM_WORKERS, args...>::run(results);
-        sweep_size_1d<test<kittens::bf16>, RT_SHAPE, ST_SHAPE, MAX_S, NUM_WORKERS, args...>::run(results);
+        // sweep_size_1d<test<float>, RT_SHAPE, ST_SHAPE, MAX_S, NUM_WORKERS, args...>::run(results);
+        // sweep_size_1d<test<kittens::bf16>, RT_SHAPE, ST_SHAPE, MAX_S, NUM_WORKERS, args...>::run(results);
         sweep_size_1d<test<kittens::half>, RT_SHAPE, ST_SHAPE, MAX_S, NUM_WORKERS, args...>::run(results);
     }
 };

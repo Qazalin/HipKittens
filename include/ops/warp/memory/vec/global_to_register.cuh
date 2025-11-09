@@ -53,14 +53,14 @@ __device__ inline static void load(RV &dst, const GL &src, const COORD &idx) {
     }
     else if constexpr (std::is_same_v<typename RV::layout, ortho_l>) {
         #pragma unroll
-        for(auto w = 0; w < dst.outer_dim; w++) {
+        for(auto w = 0; w < RV::outer_dim; w++) {
             int idx = w * RV::reductions + (laneid % RV::reductions);
             // this should be a maximally coalesced load.
             dst[w][0] = base_types::convertor<U, T>::convert(src_ptr[idx]);
         }
     }
     else if constexpr (std::is_same_v<typename RV::layout, naive_l>) {
-        const int offset = laneid * dst.inner_dim;
+        const int offset = laneid * RV::inner_dim;
         constexpr int inner_dim_bytes = RV::inner_dim * sizeof(U);
         // Use buffer_load_dwordx4
         if constexpr (inner_dim_bytes % 16 == 0) {
@@ -153,7 +153,7 @@ __device__ inline static void store(const GL &dst, const RV &src, const COORD &i
     
     if constexpr (std::is_same_v<typename RV::layout, align_l>) {
         #pragma unroll
-        for(auto w = 0; w < src.outer_dim; w++) {
+        for(auto w = 0; w < RV::outer_dim; w++) {
             int idx = w*RV::reductions + RV::stride*(laneid/RV::aligned_threads);
             // this should be a maximally coalesced store. I hope!
             #pragma unroll

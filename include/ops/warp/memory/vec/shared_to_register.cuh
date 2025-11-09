@@ -29,94 +29,39 @@ __device__ inline static void load(RV &dst, const SV &src) {
     using T = base_types::packing<T2>::unpacked_type;
 
     static_assert(!std::is_same_v<T, fp8e4m3> && !std::is_same_v<U, fp8e4m3>, "Unsupported type for load");
-
     static_assert(SV::length == RV::length);
     
     int laneid = ::kittens::laneid();
     
     // TODO: this uses no inter-thread communication and is therefore not optimal.
     if constexpr (std::is_same_v<typename RV::layout, align_l>) {
-
-        if constexpr (std::is_same_v<typename RV::shape, rt_16x16_s>) {
-            const int lane_offset = 4*(laneid/16) + laneid%4;
-            const uint32_t addr = reinterpret_cast<uintptr_t>(&src.data[0]) + lane_offset * sizeof(U);
-            #pragma unroll
-            for(auto w = 0; w < dst.outer_dim; w++) {
-                for (auto idx = 0; idx < dst.inner_dim; idx++) {
-                    asm volatile(
-                        "ds_read_b64 %0, %1 offset:%2\n"
-                        : "=v"(dst[w][idx])
-                        : "v"(addr), "i"((w * 16 + idx * 2) * sizeof(U))
-                        : "memory"
-                    );
-                }
-            }
-        } else {
-            const int offset = (laneid % dst.aligned_threads) * dst.stride;
+        #pragma unroll
+        for (int w = 0; w < dst.outer_dim; w++) {
+            int idx = w * RV::reductions + RV::stride*(laneid/RV::aligned_threads);
 
             #pragma unroll
-            for (int w = 0; w < dst.outer_dim; w++) {
-
+            for (int i = 0; i < RV::strides_per_tile; i++) {
                 #pragma unroll
-                for (int i = 0; i < dst.strides_per_tile; i++) {
-                    const int idx = w * dst.reductions + offset + i * dst.elements_per_stride_group;
-                    
-                    #pragma unroll
-                    for (int j = 0; j < dst.packed_per_stride; j++) {
-                        dst[w][i * dst.packed_per_stride + j] = base_types::convertor<T2, U2>::convert(*(U2*) (&src.data[idx + j * dst.packing]));
-                    }
+                for (int j = 0; j < RV::packed_per_stride; j++) {
+                    dst[w][i * RV::packed_per_stride + j] = base_types::convertor<T2, U2>::convert(*(U2*)&src.data[idx + i * RV::elements_per_stride_group + j * RV::packing]);
                 }
             }
         }
     }
     else if constexpr (std::is_same_v<typename RV::layout, ortho_l>) {
         #pragma unroll
-        for(auto w = 0; w < (dst.outer_dim+1)/2; w++) {
-            int idx = w*kittens::WARP_THREADS + laneid;
-            int o_dim = w*2;
+        for(auto w = 0; w < RV::outer_dim; w++) {
+            int idx = w * RV::reductions + (laneid % RV::reductions);
             // this should be a maximally coalesced load.
-            if(idx < dst.length) {
-                dst[o_dim][0] = base_types::convertor<T, U>::convert(src.data[idx]);
-            }
-        }
-
-
-        #pragma unroll
-        for(auto w = 0; w < (dst.outer_dim+1)/2; w++) {
-            const int o_dim = w*2;
-            const int other_o_dim = o_dim + 1;
-            if constexpr (std::is_same_v<T, float>) {
-                uint2_t res = __builtin_amdgcn_permlane32_swap(__float_as_uint(dst[o_dim][0]), __float_as_uint(dst[o_dim][0]), false, true);
-                dst[o_dim][0] = __uint_as_float(res.x);
-                if (other_o_dim < dst.outer_dim) {
-                    dst[other_o_dim][0] = __uint_as_float(res.y);
-                }
-            }
-            else if constexpr (std::is_same_v<T, bf16>) {
-                uint2_t res = __builtin_amdgcn_permlane32_swap(__bfloat16_as_ushort(dst[o_dim][0]), __bfloat16_as_ushort(dst[o_dim][0]), false, true);
-                dst[o_dim][0] = __ushort_as_bfloat16(res.x);
-                if (other_o_dim < dst.outer_dim) {
-                    dst[other_o_dim][0] = __ushort_as_bfloat16(res.y);
-                }
-            }
-            else if constexpr (std::is_same_v<T, half>) {
-                uint2_t res = __builtin_amdgcn_permlane32_swap(__half_as_ushort(dst[o_dim][0]), __half_as_ushort(dst[o_dim][0]), false, true);
-                dst[o_dim][0] = __ushort_as_half(res.x);
-                if (other_o_dim < dst.outer_dim) {
-                    dst[other_o_dim][0] = __ushort_as_half(res.y);
-                }
-            } else {
-                static_assert(false, "Unsupported type");
-            }
+            dst[w][0] = base_types::convertor<T, U>::convert(src.data[idx]);
         }
     }
     else if constexpr (std::is_same_v<typename RV::layout, naive_l>) {
+        const int offset = laneid * RV::inner_dim;
         #pragma unroll
-        for(auto w = 0; w < dst.outer_dim; w++) {
-            int idx = w*kittens::WARP_THREADS + laneid;
-            if(idx < dst.length) {
-                dst[w][0] = base_types::convertor<T, U>::convert(src.data[idx]);
-            }
+        for(int i = 0; i < RV::inner_dim; i++) {
+            int idx = offset + i;
+            dst[0][i] = base_types::convertor<T, U>::convert(src.data[idx]);
         }
     }
 }
@@ -137,51 +82,38 @@ __device__ inline static void store(SV &dst, const RV &src) {
     using T = base_types::packing<T2>::unpacked_type;
 
     static_assert(SV::length == RV::length);
-
     static_assert(!std::is_same_v<T, fp8e4m3> && !std::is_same_v<U, fp8e4m3>, "Unsupported type for store");
 
     int laneid = ::kittens::laneid();
 
     if constexpr (std::is_same_v<typename RV::layout, align_l>) {
         #pragma unroll
-        for(auto w = 0; w < (src.outer_dim+3)/4; w++) {
-            int idx = w*2*kittens::WARP_THREADS + 16*((laneid%32)/4) + 8*(laneid/32) + 2*(laneid%4);
-            int o_dim = w*4 + ((laneid%32)/8);
-            int i_dim = (laneid%8);
+        for(auto w = 0; w < RV::outer_dim; w++) {
+            int idx = w * RV::reductions + RV::stride*(laneid/RV::aligned_threads);
             // this should be a maximally coalesced store. I hope!
-            if(idx < src.length)
-                *(U2*)&dst.data[idx] = base_types::convertor<U2, T2>::convert(src[o_dim][i_dim]);
+            #pragma unroll
+            for(int i = 0; i < RV::strides_per_tile; i++) {
+                #pragma unroll
+                for(int j = 0; j < RV::packed_per_stride; j++) {
+                    *(U2*)&dst.data[idx + i * RV::elements_per_stride_group + j * RV::packing] = base_types::convertor<U2, T2>::convert(src[w][i * RV::packed_per_stride + j]);
+                }
+            }
         }
     }
-    // else if constexpr (std::is_same_v<typename RV::layout, accum_align_l>) {
-    //     #pragma unroll
-    //     for(auto w = 0; w < (src.outer_dim+3)/4; w++) {
-    //         int idx = w*2*kittens::WARP_THREADS + 8*((laneid%32)/2) + 4*(laneid/32) + 2*(laneid%2);
-    //         int o_dim = w*4 + ((laneid%32)/8);
-    //         int i_dim = (laneid%8);
-    //         // this should be a maximally coalesced store. I hope!
-    //         if(idx < src.length)
-    //             *(U2*)&dst.data[idx] = base_types::convertor<U2, T2>::convert(src[o_dim][i_dim]);
-    //     }
-    // }
     else if constexpr (std::is_same_v<typename RV::layout, ortho_l>) {
         #pragma unroll
-        for(auto w = 0; w < (src.outer_dim+1)/2; w++) {
-            int idx = w*kittens::WARP_THREADS + laneid;
-            int o_dim = w*2 + laneid/32;
-            // this should be a maximally coalesced load.
-            if(idx < src.length) {
-                dst.data[idx] = base_types::convertor<U, T>::convert(src[o_dim][0]);
-            }
+        for(auto w = 0; w < RV::outer_dim; w++) {
+            int idx = w * RV::reductions + (laneid % RV::reductions);
+            // this should be a maximally coalesced store. I hope!
+            dst.data[idx] = base_types::convertor<U, T>::convert(src[w][0]);
         }
     }
     else if constexpr (std::is_same_v<typename RV::layout, naive_l>) {
+        const int offset = laneid * RV::inner_dim;
         #pragma unroll
-        for(auto w = 0; w < src.outer_dim; w++) {
-            int idx = w*64 + laneid;
-            if(idx < src.length) {
-                dst.data[idx] = base_types::convertor<U, T>::convert(src[w][0]);
-            }
+        for(int i = 0; i < RV::inner_dim; i++) {
+            int idx = offset + i;
+            dst.data[idx] = base_types::convertor<U, T>::convert(src[0][i]);
         }
     }
 }

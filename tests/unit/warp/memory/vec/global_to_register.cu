@@ -14,7 +14,6 @@ struct reg_vec_load_store {
         o_ref = i_ref; // overwrite the whole thing
     }
     template<typename RT_SHAPE, typename ST_SHAPE, typename dtype, int S, int NW, kittens::ducks::gl::all GL, kittens::ducks::rv_layout::all L> __device__ static void device_func(const GL &input, const GL &output) {
-        // Only testing row layout tile vectors
         kittens::rv<dtype, RT_SHAPE::cols*S, RT_SHAPE::cols, RT_SHAPE, L> reg_vec;
         kittens::load(reg_vec, input, {});
         __builtin_amdgcn_s_waitcnt(0);

@@ -20,15 +20,6 @@ namespace kittens {
  */
 template<ducks::sv::all SV, ducks::gl::all GL, ducks::coord::vec COORD=coord<SV>, int N_THREADS=WARP_THREADS>
 __device__ static inline void load(SV &dst, const GL &src, const COORD &idx) {
-    // constexpr int elem_per_transfer = sizeof(float4) / sizeof(typename SV::dtype);
-    // constexpr int total_calls = (SV::length + WARP_THREADS*elem_per_transfer - 1) / (WARP_THREADS*elem_per_transfer); // round up
-    // typename GL::dtype *src_ptr = (typename GL::dtype*)&src[(idx.template unit_coord<-1, 3>())];
-    // #pragma unroll
-    // for(int iter = 0, i = ::kittens::laneid(); iter < total_calls; iter++, i+=WARP_THREADS) {
-    //     if(i * elem_per_transfer < SV::length) {
-    //         *(float4*)&dst.data[i*elem_per_transfer] = *(float4*)&src_ptr[i*elem_per_transfer];
-    //     }
-    // }
     using T = typename SV::dtype;
     static_assert(!std::is_same_v<T, fp8e4m3>, "Unsupported type for load");
 
@@ -38,7 +29,7 @@ __device__ static inline void load(SV &dst, const GL &src, const COORD &idx) {
     constexpr int bytes_per_warp = bytes_per_thread * kittens::WARP_THREADS;
     constexpr int elem_per_warp = bytes_per_warp / sizeof(T);
     constexpr int num_warps = N_THREADS / kittens::WARP_THREADS;
-    const int laneid = kittens::laneid() % N_THREADS;
+    const int laneid = kittens::laneid();
     const int warpid = kittens::warpid() % num_warps;
 
     typename GL::dtype *src_ptr = (typename GL::dtype*)&src[(idx.template unit_coord<-1, 3>())];
@@ -60,7 +51,7 @@ __device__ static inline void load(SV &dst, const GL &src, const COORD &idx) {
         llvm_amdgcn_raw_buffer_load_lds(
             srsrc,
             lds_ptr,
-            4,
+            bytes_per_thread,
             lane_byte_offset,
             0,
             0,

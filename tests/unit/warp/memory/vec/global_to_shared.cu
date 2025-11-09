@@ -2,27 +2,21 @@
 
 #ifdef TEST_WARP_MEMORY_VEC_GLOBAL_TO_SHARED
 
-#ifdef KITTENS_CDNA4
-#define LENGTH 32
-#else
-#define LENGTH 16
-#endif
-
 template<typename T>
 struct shared_vec_load_store {
     using dtype = T;
-    template<int S, int NW> using valid = std::bool_constant<NW == 1 && S<=64 
+    template<typename RT_SHAPE, typename ST_SHAPE, int S, int NW> using valid = std::bool_constant<NW == 1 && S<=64 
     >;
     static inline const std::string test_identifier = std::is_same_v<dtype, kittens::bf16> ? "shared_vec_loadstore_gmem=bf16" :
                                                       std::is_same_v<dtype, kittens::half> ? "shared_vec_loadstore_gmem=half" :
                                                                                              "shared_vec_loadstore_gmem=float";
-    template<int S, int NW, kittens::ducks::gl::all GL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
+    template<typename RT_SHAPE, typename ST_SHAPE, int S, int NW, kittens::ducks::gl::all GL> __host__ static void host_func(const std::vector<float> &i_ref, std::vector<float> &o_ref) {
         o_ref = i_ref; // overwrite the whole thing
     }
-    template<int S, int NW, kittens::ducks::gl::all GL> __device__ static void device_func(const GL &input, const GL &output) {
+    template<typename RT_SHAPE, typename ST_SHAPE, typename dtype, int S, int NW, kittens::ducks::gl::all GL> __device__ static void device_func(const GL &input, const GL &output) {
         extern __shared__ kittens::alignment_dummy __shm[]; // this is the CUDA shared memory
-        kittens::shared_allocator<LENGTH> al((int*)&__shm[0]); 
-        kittens::col_vec<kittens::st<dtype, kittens::TILE_ROW_DIM<dtype>*S, kittens::TILE_COL_DIM<dtype>*S>> &shared_vec = al.allocate<kittens::col_vec<kittens::st<dtype, kittens::TILE_ROW_DIM<dtype>*S, kittens::TILE_COL_DIM<dtype>*S>>>();
+        kittens::shared_allocator<RT_SHAPE::cols*S> al((int*)&__shm[0]); 
+        kittens::sv<dtype, RT_SHAPE::cols*S> &shared_vec = al.template allocate<kittens::sv<dtype, RT_SHAPE::cols*S>>();
         kittens::load(shared_vec, input, {});
         kittens::store(output, shared_vec, {});
     }
@@ -36,7 +30,9 @@ void warp::memory::vec::global_to_shared::tests(test_data &results) {
                          INTENSITY_3 ? 8  :
                          INTENSITY_4 ? 16 : -1;
                          
-    sweep_gmem_type_1d_warp<shared_vec_load_store, SIZE>::run(results);
+    using DEFAULT_ST_SHAPE = kittens::ducks::st_shape::st_16x16;
+    using DEFAULT_RT_SHAPE = kittens::ducks::rt_shape::rt_16x16;
+    sweep_gmem_type_1d_warp<shared_vec_load_store, DEFAULT_RT_SHAPE, DEFAULT_ST_SHAPE, SIZE>::run(results);
 }
 
 #endif
