@@ -7,9 +7,6 @@ void group::tests(test_data &results) {
 #ifdef TEST_GROUP_MEMORY
     group::memory::tests(results);
 #endif
-#ifdef TEST_GROUP_SHARED
-    group::shared::tests(results);
-#endif
 }
 
 #endif

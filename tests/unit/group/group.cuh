@@ -5,7 +5,6 @@
 #include "testing_commons.cuh"
 
 #include "memory/memory.cuh"
-#include "shared/shared.cuh"
 
 namespace group {
 
