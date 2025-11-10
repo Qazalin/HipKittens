@@ -154,7 +154,18 @@ template<kittens::ducks::rt_shape::all RT_SHAPE, kittens::ducks::st_shape::all S
 template <typename T> concept integral_wrapper = std::is_integral_v<decltype(T::value)>;
 template<kittens::ducks::rt_shape::all RT_SHAPE, kittens::ducks::st_shape::all ST_SHAPE, int H, int W, int NW, integral_wrapper _ST_H> std::string generate_test_name(std::string test_id) {
     constexpr int ST_H = _ST_H::value;
-    std::string label = test_id+"_["+std::to_string(H)+"x"+std::to_string(W)+"_"+std::to_string(ST_H)+"x"+std::to_string(W)+"]";
+    std::string label = generate_test_name<RT_SHAPE,ST_SHAPE,H,W,NW>(test_id);
+    label += "_["+std::to_string(ST_H)+"x"+std::to_string(W)+"]";
+    if constexpr (NW > 1) {
+        label += "_["+std::to_string(NW)+"warps]";
+    }
+    return label;
+}
+template<kittens::ducks::rt_shape::all RT_SHAPE, kittens::ducks::st_shape::all ST_SHAPE, int H, int W, int NW, integral_wrapper _ST_H, integral_wrapper _ST_W> std::string generate_test_name(std::string test_id) {
+    constexpr int ST_H = _ST_H::value;
+    constexpr int ST_W = _ST_W::value;
+    std::string label = generate_test_name<RT_SHAPE,ST_SHAPE,H,W,NW>(test_id);
+    label += "_["+std::to_string(ST_H)+"x"+std::to_string(ST_W)+"]";
     if constexpr (NW > 1) {
         label += "_["+std::to_string(NW)+"warps]";
     }

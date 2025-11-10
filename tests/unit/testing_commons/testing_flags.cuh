@@ -220,7 +220,7 @@
 
 /* -----  DEPTH 1 MACROS  ----- */
 
-#if defined(TEST_WARP_MEMORY) || defined(TEST_WARP_REGISTER) 
+#if defined(TEST_WARP_MEMORY) || defined(TEST_WARP_REGISTER) || defined(TEST_WARP_SHARED)
 #define TEST_WARP
 #endif
 
