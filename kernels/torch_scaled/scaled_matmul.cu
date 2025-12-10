@@ -103,7 +103,7 @@ __global__ __launch_bounds__(512, 2) void scaled_matmul(const kittens::gl<fp8e4m
     __builtin_amdgcn_s_barrier();
 
     // Inner loop over K dimension
-    #pragma unroll 
+    #pragma unroll 2
     for (int k = 0; k < k_iters - 2; k++, tic^=1, toc^=1) {
         
         auto bs_subtile0 = kittens::subtile_inplace<REG_BLOCK_N, BLOCK_K>(Bs[tic][0], {warp_n, 0});
