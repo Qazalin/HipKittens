@@ -16,8 +16,8 @@ namespace kittens {
 namespace detail {
 template<typename... Args>
 struct descriptor_dict {
-    __host__ descriptor_dict() {}
-    template<typename T> __host__ descriptor_dict(T _, int b, int d, int r, int c) {}
+    __host__ __device__ descriptor_dict() {}
+    template<typename T> __host__ __device__ descriptor_dict(T _, int b, int d, int r, int c) {}
     __host__ __device__ descriptor_dict(const descriptor_dict &other) {}
 };
 }
@@ -58,7 +58,7 @@ struct gl {
 
     detail::descriptor_dict<TMA_Types...> tma_descs;
 
-    __host__ inline gl(T *_data,
+    __host__ __device__ inline gl(T *_data,
                         ducks::gl::make_arg_t<b> _batch,
                         ducks::gl::make_arg_t<d> _depth,
                         ducks::gl::make_arg_t<r> _rows,
