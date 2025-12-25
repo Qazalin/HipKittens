@@ -16,8 +16,6 @@ C_torch = A@Bt
 C_aiter = tgemm.mm(A.to(gpu), B.to(gpu), None, None, None)
 assert torch.allclose(C_aiter.to("cpu"), C_torch, rtol=1e-2, atol=1e-3)
 
-exit(0)
-
 C_tk = torch.zeros((N, N), dtype=torch.bfloat16, device=gpu).contiguous()
 tk_kernel.dispatch_micro(A.to(gpu), B.to(gpu), C_tk)
 
